@@ -144,7 +144,12 @@ display:
       } else if (page == 1) {
         auto now = id(ha_time).now();
         if (now.is_valid()) {
-          it.strftime(120, 90, id(font_clock), ACCENT, TextAlign::TOP_CENTER, "%H:%M", now);
+          int hour12 = now.hour % 12;
+          if (hour12 == 0) hour12 = 12;
+          char hm[8];
+          snprintf(hm, sizeof(hm), "%d:%02d", hour12, now.minute);
+          it.print(120, 90, id(font_clock), ACCENT, TextAlign::TOP_CENTER, hm);
+          it.print(120, 50, id(font_med), FG, TextAlign::TOP_CENTER, now.hour < 12 ? "AM" : "PM");
           it.strftime(120, 180, id(font_med), FG, TextAlign::TOP_CENTER, "%a %d %b", now);
         } else {
           it.print(120, 130, id(font_med), DIM, TextAlign::TOP_CENTER, "waiting for time");
