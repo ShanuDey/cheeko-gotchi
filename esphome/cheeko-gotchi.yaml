@@ -296,6 +296,9 @@ media_player:
   - platform: speaker
     name: "Speaker"
     id: gotchi_player
+    volume_increment: 0.1      # step per volume-button press
+    volume_min: 0.1            # never fully mute by button
+    volume_max: 1.0
     announcement_pipeline:
       speaker: spk
       format: FLAC
@@ -330,6 +333,8 @@ binary_sensor:
       inverted: true           # active LOW
     filters:
       - delayed_on_off: 20ms   # debounce
+    on_press:
+      - media_player.volume_up: gotchi_player
 
   - platform: gpio
     name: "Volume Down"
@@ -339,6 +344,8 @@ binary_sensor:
       inverted: true
     filters:
       - delayed_on_off: 20ms
+    on_press:
+      - media_player.volume_down: gotchi_player
 
   - platform: gpio
     name: "Middle Button"
