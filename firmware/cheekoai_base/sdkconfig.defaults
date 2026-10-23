@@ -1,0 +1,10 @@
+# Cheeko Gotchi base firmware defaults (same board settings as hardware_test)
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+CONFIG_FREERTOS_HZ=1000
+# This board's only USB connection is the native USB-Serial/JTAG port.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# Font used by DisplayService::CenterText (LVGL's default is only 14 px).
+CONFIG_LV_FONT_MONTSERRAT_24=y
