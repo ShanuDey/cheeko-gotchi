@@ -12,7 +12,8 @@ Device name: `cgotchi`. Config: [cheeko-gotchi.yaml](cheeko-gotchi.yaml).
 |---|---|
 | Wi-Fi, HA API, wireless OTA | works |
 | Backlight switch | works |
-| Volume up/down buttons | works: each press steps the speaker volume by 10% (min 10%) |
+| Volume up/down buttons | works: each short press steps the speaker volume by 10% (min 10%) |
+| Voice assistant | added: hold Volume Up (about 1 s) to talk, push-to-talk only. Listening, thinking and speaking each have their own face. See Voice assistant below. |
 | Boot animation | works: eyes open and "Hello!" for the first ~2.6 s after power on |
 | On-screen OTA progress | works: "Updating" with a percentage, or "Update failed" |
 | Charging detect (GPIO 37) | not possible, see Notes |
@@ -38,6 +39,25 @@ Secrets: `wifi_ssid` and `wifi_password` (2.4 GHz only), `ap_password`, and
 ```bash
 python -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"
 ```
+
+## Voice assistant
+
+The device is a push-to-talk microphone and speaker for HA's Assist pipeline
+(speech to text, conversation agent, text to speech). There is no wake word.
+
+1. In HA, open the device page and set its **Assist pipeline** to the one you
+   want (an LLM conversation agent gives open-ended chat).
+2. Hold **Volume Up** for about 1 second. A short press still raises the volume.
+   Hold again while it is running to cancel.
+3. The face shows the state: wide eyes with pulsing rings (listening), eyes
+   glancing aside with three dots (thinking), then the talking mouth while the
+   reply plays. A red `voice error` caption appears for 3 s if the pipeline fails.
+
+Replies play through the **Speaker** media player, so the volume buttons control
+them. Tune `mic_gain` (under `audio_adc`) and `noise_suppression_level`,
+`auto_gain` and `volume_multiplier` (under `voice_assistant`) if speech is
+quiet or misheard. The mic also hears the speaker, so interrupting a reply is
+unreliable.
 
 ## Validate before installing
 
@@ -87,6 +107,9 @@ bootloader at `0x410000`. To keep a backup first:
   "Hello!" appear before the normal Face page. During a later OTA the screen
   shows "Updating" with a progress bar instead (it only appears if the firmware
   already running has it, so it shows from the second flash after adding it).
+- Voice: hold Volume Up, speak, and check the face changes from listening to
+  thinking to talking, and the reply is audible. The log shows
+  `Assist Pipeline ended` when it finishes.
 - HA: the device page has **Backlight**, the **Speaker** media player,
   **Display Page**, **Clock Format** (12 or 24 hour), **Face Expression**,
   **Message Title/Body**, **Mic Level**
@@ -119,6 +142,12 @@ bootloader at `0x410000`. To keep a backup first:
   with `esphome upload`.
 - **Speaker log `Parent bus is busy`:** a non-passive `sound_level` holds the
   shared I2S bus. Keep it `passive: true`.
+- **Face does not show while the assistant talks:** voice replies play as
+  announcements, so the media player state is `ANNOUNCING`, not `PLAYING`. The
+  display and the redraw interval check both.
+- **Voice assistant does nothing or sits at listening:** check the device has an
+  Assist pipeline selected in HA, and look for `voice_assistant` lines in the log.
+  `sound_level ... Microphone isn't running` is normal (Mic Level is passive).
 - **Speaker clicks but is silent:** the amp works but the codec isn't producing
   sound; compare against the reference init in SKILL.md section 6.
 
