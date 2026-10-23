@@ -1,16 +1,20 @@
-# Stage 1: "hello" firmware. Goal: device joins Home Assistant, we can see the
-# I2C chips, the volume buttons, and toggle the backlight from HA.
+# Stage 2/3: hardware bring-up. Display, speaker, mic, buttons, backlight.
 # Pins come from SKILL.md section 2 (verified on real hardware).
 
 esphome:
   name: cgotchi
-  friendly_name: cheeko
+  friendly_name: Cheeko
   # GPIO 2 latches power OFF if driven HIGH (SKILL.md Gotcha 8). Force it LOW
   # as early as possible so the device never cuts its own power.
   on_boot:
-    priority: 800
-    then:
-      - switch.turn_off: power_off_latch
+    - priority: 800
+      then:
+        - switch.turn_off: power_off_latch
+    # The display uses update_interval: never, so draw the test screen once
+    # after everything (including the panel) has finished setting up.
+    - priority: -100
+      then:
+        - component.update: lcd
 
 esp32:
   variant: esp32s3
@@ -31,6 +35,7 @@ api:
   encryption:
     key: !secret api_key
 
+# `encryption:` with no key reuses the API key, so OTA uploads are encrypted too.
 ota:
   - platform: esphome
     encryption:
@@ -43,12 +48,128 @@ wifi:
     ssid: "Cheeko Gotchi Fallback"
     password: !secret ap_password
 
+captive_portal:
+
 # One I2C bus shared by touch, both audio codecs and the accelerometer.
 i2c:
+  id: bus_a
   sda: 12
   scl: 11
   frequency: 400kHz
   scan: true     # prints every chip it finds in the log; expect 0x15 0x18 0x19 0x40
+
+# ---------------------------------------------------------------- display
+# 240x296 ST7789-class panel, no MISO. MADCTL 0x40 = mirror X, RGB order,
+# no inversion (SKILL.md section 4). Portrait only; landscape needs offsets.
+spi:
+  clk_pin: 9
+  mosi_pin: 10
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_big
+    size: 36
+
+display:
+  - platform: mipi_spi
+    id: lcd
+    model: ST7789V
+    dimensions:
+      width: 240
+      height: 296
+    cs_pin: 14
+    dc_pin: 8
+    reset_pin: 17
+    data_rate: 40MHz
+    color_order: rgb
+    invert_colors: false
+    transform:                 # all three keys are required once transform is used
+      swap_xy: false
+      mirror_x: true
+      mirror_y: false
+    update_interval: never     # draw once; the lambda below only runs on request
+    lambda: |-
+      it.fill(Color::BLACK);
+      // Text, not just rectangles: a mirrored solid square looks the same as a
+      // normal one, but "ABC" reads backwards if the mirror setting is wrong.
+      it.print(20, 20, id(font_big), Color(255, 255, 255), "ABC");
+      it.filled_rectangle(20, 90, 60, 60, Color(255, 0, 0));    // red
+      it.filled_rectangle(90, 90, 60, 60, Color(0, 255, 0));    // green
+      it.filled_rectangle(160, 90, 60, 60, Color(0, 0, 255));   // blue
+      it.print(20, 180, id(font_big), Color(255, 255, 0), "Hello");
+
+# ------------------------------------------------------------------ audio
+# One I2S bus shared by playback (ES8311) and capture (ES7210).
+# The ES8311 cannot record; all capture goes through the ES7210 (SKILL.md).
+i2s_audio:
+  - id: i2s_bus
+    i2s_lrclk_pin: 16
+    i2s_bclk_pin: 15
+    i2s_mclk_pin: 5
+
+audio_dac:
+  - platform: es8311
+    id: es8311_dac
+    address: 0x18
+    bits_per_sample: 16bit
+    sample_rate: 16000
+
+audio_adc:
+  - platform: es7210
+    id: es7210_adc
+    address: 0x40
+    bits_per_sample: 16bit
+    sample_rate: 16000
+    mic_gain: 24dB
+
+speaker:
+  - platform: i2s_audio
+    id: spk
+    i2s_audio_id: i2s_bus
+    i2s_dout_pin: 6
+    dac_type: external
+    audio_dac: es8311_dac
+    channel: left
+    sample_rate: 16000
+    bits_per_sample: 16bit
+
+microphone:
+  - platform: i2s_audio
+    id: mic
+    i2s_audio_id: i2s_bus
+    i2s_din_pin: 7
+    adc_type: external
+    sample_rate: 16000
+    bits_per_sample: 16bit
+
+sensor:
+  # Loudness in dB so you can watch the mic react in HA.
+  # Passive: only measures while something else (e.g. the voice assistant) is
+  # capturing. A non-passive meter holds the I2S bus open and blocks the speaker.
+  - platform: sound_level
+    id: noise_meter
+    microphone: mic
+    passive: true
+    rms:
+      name: "Mic Level"
+
+button:
+  - platform: template
+    name: "Redraw Display"
+    on_press:
+      - component.update: lcd
+
+# -------------------------------------------------------- switches / inputs
+# Lets HA play audio / TTS on the device: Media browser, tts.speak, announcements.
+media_player:
+  - platform: speaker
+    name: "Speaker"
+    id: gotchi_player
+    announcement_pipeline:
+      speaker: spk
+      format: FLAC
+      sample_rate: 16000
+      num_channels: 1
 
 switch:
   - platform: gpio
@@ -62,6 +183,12 @@ switch:
     id: backlight
     pin: 13
     restore_mode: ALWAYS_ON    # visible in HA, toggle it to prove HA controls hardware
+
+  - platform: gpio
+    id: speaker_amp
+    pin: 4                     # NS4150B amp enable, HIGH = on
+    restore_mode: ALWAYS_ON
+    internal: true
 
 binary_sensor:
   - platform: gpio
@@ -81,3 +208,30 @@ binary_sensor:
       inverted: true
     filters:
       - delayed_on_off: 20ms
+
+  - platform: gpio
+    name: "Middle Button"
+    pin:
+      number: 3
+      mode:
+        input: true
+        pulldown: true         # active HIGH (not inverted); hardware_test also enables the internal pulldown
+    filters:
+      - delayed_on_off: 20ms
+
+# Debug for the middle button: log the raw GPIO 3 level whenever it changes.
+# If this never prints a change while you press it, the signal isn't reaching GPIO 3.
+globals:
+  - id: last_gpio3
+    type: int
+    initial_value: "-1"
+
+interval:
+  - interval: 50ms
+    then:
+      - lambda: |-
+          int lvl = gpio_get_level((gpio_num_t) 3);
+          if (lvl != id(last_gpio3)) {
+            id(last_gpio3) = lvl;
+            ESP_LOGW("gpio3", "raw level = %d", lvl);
+          }
