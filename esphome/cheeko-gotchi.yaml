@@ -1,0 +1,83 @@
+# Stage 1: "hello" firmware. Goal: device joins Home Assistant, we can see the
+# I2C chips, the volume buttons, and toggle the backlight from HA.
+# Pins come from SKILL.md section 2 (verified on real hardware).
+
+esphome:
+  name: cgotchi
+  friendly_name: cheeko
+  # GPIO 2 latches power OFF if driven HIGH (SKILL.md Gotcha 8). Force it LOW
+  # as early as possible so the device never cuts its own power.
+  on_boot:
+    priority: 800
+    then:
+      - switch.turn_off: power_off_latch
+
+esp32:
+  variant: esp32s3
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB          # matches firmware/hardware_test
+  framework:
+    type: esp-idf
+
+# Octal PSRAM is mandatory on this board (SKILL.md Gotcha 1).
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG   # board uses the S3's native USB, not a UART chip
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    encryption:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # If Wi-Fi fails, the device makes its own hotspot so you can still reach it.
+  ap:
+    ssid: "Cheeko Gotchi Fallback"
+    password: !secret ap_password
+
+# One I2C bus shared by touch, both audio codecs and the accelerometer.
+i2c:
+  sda: 12
+  scl: 11
+  frequency: 400kHz
+  scan: true     # prints every chip it finds in the log; expect 0x15 0x18 0x19 0x40
+
+switch:
+  - platform: gpio
+    id: power_off_latch
+    pin: 2
+    restore_mode: ALWAYS_OFF
+    internal: true             # hidden from HA on purpose: turning it on kills power
+
+  - platform: gpio
+    name: "Backlight"
+    id: backlight
+    pin: 13
+    restore_mode: ALWAYS_ON    # visible in HA, toggle it to prove HA controls hardware
+
+binary_sensor:
+  - platform: gpio
+    name: "Volume Up"
+    pin:
+      number: 40
+      mode: INPUT_PULLUP
+      inverted: true           # active LOW
+    filters:
+      - delayed_on_off: 20ms   # debounce
+
+  - platform: gpio
+    name: "Volume Down"
+    pin:
+      number: 39
+      mode: INPUT_PULLUP
+      inverted: true
+    filters:
+      - delayed_on_off: 20ms
