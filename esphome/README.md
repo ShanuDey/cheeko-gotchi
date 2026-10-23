@@ -13,7 +13,8 @@ Device name: `cgotchi`. Config: [cheeko-gotchi.yaml](cheeko-gotchi.yaml).
 | Wi-Fi, HA API, wireless OTA | works |
 | Backlight switch, volume up/down | works |
 | Middle button (GPIO 3) | not working, see Troubleshooting |
-| Display, speaker, mic | in the config, not yet confirmed on hardware |
+| Display: Face, Clock and Message pages, talking mouth while audio plays | works |
+| Speaker (HA media player), mic level | works |
 | Touch (CST810), accelerometer (LIS2DH12) | not added yet |
 
 ## Setup
@@ -24,8 +25,8 @@ Two ways to build. Both need the secrets below.
 the contents of `cheeko-gotchi.yaml`, then **Install**. Secrets go in the
 dashboard's **Secrets** page.
 
-**Local:** `pip install esphome`, then `cp secrets.example.yaml secrets.yaml`
-(git-ignored, never commit it).
+**Local:** `uv sync` (esphome is a dev dependency, pinned in `uv.lock`), then
+`cp secrets.example.yaml secrets.yaml` (git-ignored, never commit it).
 
 Secrets: `wifi_ssid` and `wifi_password` (2.4 GHz only), `ap_password`, and
 `api_key`:
@@ -35,23 +36,33 @@ python -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"
 
 ## Validate before installing
 
-Catches YAML errors in one pass instead of one at a time in the editor:
-```bash
-cd esphome
-esphome config cheeko-gotchi.yaml
+Catches YAML errors in one pass instead of one at a time in the editor. Run
+from **PowerShell** in `esphome/`. Don't use Git Bash: ESP-IDF fails there with
+`MSys/Mingw is not supported`.
+```powershell
+uv run esphome config cheeko-gotchi.yaml
 ```
 This checks the YAML only. C++ lambdas (tone generator, GPIO 3 debug log) are
-checked by `esphome compile cheeko-gotchi.yaml`, which is slow the first time.
-Use the same ESPHome version as the dashboard (shown at its bottom).
+checked by `uv run esphome compile cheeko-gotchi.yaml`, which is slow the first
+time. Run both before every flash, especially after editing a `lambda:`. Keep
+the pinned ESPHome version equal to the dashboard's (shown at its bottom):
+`uv add --dev esphome==<version>`.
+
+`config` and `compile` need `secrets.yaml`. For validation only you can use a
+copy of `secrets.example.yaml`, but never flash with it: the device would get
+the wrong Wi-Fi credentials. Flash only with your real file.
 
 ## Flash
 
-First flash is over USB. Local: `esphome run cheeko-gotchi.yaml --device COMx`
+First flash is over USB. Local: `uv run esphome run cheeko-gotchi.yaml --device COMx`
 (find the port with `../tools/cheeko ports`). Or download the factory image
 from the dashboard and flash it with https://web.esphome.io in Chrome/Edge.
 After flashing, unplug and replug USB; the board stays in download mode.
 
-After that, use **Install → Wirelessly**. OTA is encrypted: it reuses `api_key`.
+After that, use **Install → Wirelessly**, or locally
+`uv run esphome run cheeko-gotchi.yaml --device <ip> --no-logs`. Use the device
+IP (HA device page), not `cgotchi.local`; mDNS is unreliable on Windows. OTA is
+encrypted: it reuses `api_key`.
 If a first encrypted install is refused, add `allow_plaintext_upload: true`
 under `ota` for that one install, then remove it.
 
@@ -62,18 +73,22 @@ bootloader at `0x410000`. To keep a backup first:
 ## Check it works
 
 - Log: I2C scan finds `0x15 0x18 0x19 0x40`.
-- Screen: "ABC" reads left to right, red/green/blue squares, "Hello". Mirrored
-  text means the `mirror_x` transform is wrong.
-- HA: the device page has **Backlight**, **Play Test Tone**, **Redraw Display**,
-  **Mic Level** and three button sensors. Clap near the board and watch Mic
-  Level change.
+- Screen: the Face page shows a smiling face. Switch **Display Page** to Clock
+  or Message and check the text reads left to right; mirrored text means the
+  `mirror_x` transform is wrong. While audio plays the face talks whatever page
+  is selected (the **Display Page** select does not change).
+- HA: the device page has **Backlight**, the **Speaker** media player,
+  **Display Page**, **Face Expression**, **Message Title/Body**, **Mic Level**
+  and three button sensors. Mic Level only updates while something else is
+  capturing audio (it is passive).
 
 ## Troubleshooting
 
 - **Black screen after flashing:** expected until the YAML has a `display:`
   section; ESPHome only does what the YAML says.
-- **Display stays black though flashed:** the display uses
-  `update_interval: never`, so it only draws on boot and on **Redraw Display**.
+- **Display stays black though flashed:** the display redraws on any
+  display-entity change, once a minute, and while audio plays, so check the
+  backlight switch and the log.
 - **Colours swapped or picture offset:** `color_order`, `invert_colors`, or
   `offset_width`/`offset_height` under `dimensions`. SKILL.md has the panel's
   known quirks (GRAM wider than the visible area, edge colour corruption).
@@ -81,6 +96,14 @@ bootloader at `0x410000`. To keep a backup first:
   No log line means the signal never reaches GPIO 3 (the one-key power circuit
   may handle it). Don't hold it about 3 s; that's the deliberate power-off.
 - **Editor shows a red marker:** run `esphome config` locally for the full list.
+- **`sound_level` rejects `update_interval`/`dbfs`:** it needs `passive:` and an
+  `rms:` or `peak:` sensor.
+- **Upload drops with `connection forcibly closed` but the device is up:** retry
+  with `esphome upload`.
+- **Speaker log `Parent bus is busy`:** a non-passive `sound_level` holds the
+  shared I2S bus. Keep it `passive: true`.
+- **Speaker clicks but is silent:** the amp works but the codec isn't producing
+  sound; compare against the reference init in SKILL.md section 6.
 
 ## Notes
 
