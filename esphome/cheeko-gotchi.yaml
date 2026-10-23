@@ -418,18 +418,26 @@ voice_assistant:
         if (id(va_state) != 4) id(va_state) = 0;
     - component.update: lcd
 
+output:
+  - platform: ledc
+    id: backlight_pwm
+    pin: 13                    # LCD backlight enable, HIGH = on
+    frequency: 1000Hz
+
+light:
+  - platform: monochromatic
+    name: "Backlight"
+    id: backlight
+    output: backlight_pwm
+    restore_mode: RESTORE_DEFAULT_ON
+    default_transition_length: 0s   # no fade, snappy dimming
+
 switch:
   - platform: gpio
     id: power_off_latch
     pin: 2
     restore_mode: ALWAYS_OFF
     internal: true             # hidden from HA on purpose: turning it on kills power
-
-  - platform: gpio
-    name: "Backlight"
-    id: backlight
-    pin: 13
-    restore_mode: ALWAYS_ON    # visible in HA, toggle it to prove HA controls hardware
 
   - platform: gpio
     id: speaker_amp

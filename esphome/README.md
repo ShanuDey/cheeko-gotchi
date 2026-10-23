@@ -11,7 +11,7 @@ Device name: `cgotchi`. Config: [cheeko-gotchi.yaml](cheeko-gotchi.yaml).
 | Part | State |
 |---|---|
 | Wi-Fi, HA API, wireless OTA | works |
-| Backlight switch | works |
+| Backlight (dimmable light) | works |
 | Volume up/down buttons | works: each short press steps the speaker volume by 10% (min 10%) |
 | Voice assistant | added: hold Volume Up (about 1 s) to talk, push-to-talk only. Listening, thinking and speaking each have their own face. See Voice assistant below. |
 | Boot animation | works: eyes open and "Hello!" for the first ~2.6 s after power on |
