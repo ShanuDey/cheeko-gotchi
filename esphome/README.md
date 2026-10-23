@@ -18,6 +18,7 @@ Device name: `cgotchi`. Config: [cheeko-gotchi.yaml](cheeko-gotchi.yaml).
 | Charging detect (GPIO 37) | not possible, see Notes |
 | Middle button (GPIO 3) | not working, see Troubleshooting |
 | Display: Face, Clock and Message pages, talking mouth while audio plays | works |
+| Clock format (12/24 hour) | works: **Clock Format** select; the choice is stored in flash and survives power-off and OTA |
 | Speaker (HA media player), mic level | works |
 | Touch (CST810), accelerometer (LIS2DH12) | not added yet |
 
@@ -78,7 +79,7 @@ bootloader at `0x410000`. To keep a backup first:
 
 - Log: I2C scan finds `0x15 0x18 0x19 0x40`.
 - Screen: the Face page shows a smiling face. Switch **Display Page** to Clock
-  (12-hour time such as `9:05` with AM/PM above it, and the date below) or
+  (time such as `9:05`, or `09:05` in 24-hour mode, with the date below) or
   Message and check the text reads left to right; mirrored text means the
   `mirror_x` transform is wrong. While audio plays the face talks whatever page
   is selected (the **Display Page** select does not change).
@@ -87,7 +88,8 @@ bootloader at `0x410000`. To keep a backup first:
   shows "Updating" with a progress bar instead (it only appears if the firmware
   already running has it, so it shows from the second flash after adding it).
 - HA: the device page has **Backlight**, the **Speaker** media player,
-  **Display Page**, **Face Expression**, **Message Title/Body**, **Mic Level**
+  **Display Page**, **Clock Format** (12 or 24 hour), **Face Expression**,
+  **Message Title/Body**, **Mic Level**
   and three button sensors. Mic Level only updates while something else is
   capturing audio (it is passive).
 
@@ -133,5 +135,11 @@ bootloader at `0x410000`. To keep a backup first:
   the board has no fuel gauge on I2C and no known battery-voltage ADC pin.
 - A failed OTA that resets before boot completes rolls back to the previous
   build. Check `compiled on` in the log to see which build is running.
+- Saved settings: **Display Page**, **Clock Format**, **Face Expression** and
+  **Message Title/Body** use `restore_value: true`, so they live in flash and
+  survive power-off, reboots and OTA. Renaming one or changing its options in
+  the YAML resets it to the default once; a full flash erase clears them all.
+- There is no battery-backed clock. After power-off the Clock page shows
+  "waiting for time" until the board reconnects to HA and syncs.
 - `transform:` needs all three keys (`swap_xy`, `mirror_x`, `mirror_y`).
 - The `gpio3` debug log is temporary; remove it once the middle button is sorted.

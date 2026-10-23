@@ -187,12 +187,15 @@ display:
       } else if (page == 1) {
         auto now = id(ha_time).now();
         if (now.is_valid()) {
-          int hour12 = now.hour % 12;
-          if (hour12 == 0) hour12 = 12;
           char hm[8];
-          snprintf(hm, sizeof(hm), "%d:%02d", hour12, now.minute);
+          if (id(clock_fmt_sel).active_index().value_or(0) == 1) {     // 24 hour
+            snprintf(hm, sizeof(hm), "%02d:%02d", now.hour, now.minute);
+          } else {                                                     // 12 hour, no AM/PM
+            int hour12 = now.hour % 12;
+            if (hour12 == 0) hour12 = 12;
+            snprintf(hm, sizeof(hm), "%d:%02d", hour12, now.minute);
+          }
           it.print(120, 90, id(font_clock), ACCENT, TextAlign::TOP_CENTER, hm);
-          it.print(120, 50, id(font_med), FG, TextAlign::TOP_CENTER, now.hour < 12 ? "AM" : "PM");
           it.strftime(120, 180, id(font_med), FG, TextAlign::TOP_CENTER, "%a %d %b", now);
         } else {
           it.print(120, 130, id(font_med), DIM, TextAlign::TOP_CENTER, "waiting for time");
@@ -244,6 +247,15 @@ select:
     initial_option: Face
     optimistic: true
     restore_value: true
+    on_value:
+      - component.update: lcd
+  - platform: template
+    name: "Clock Format"
+    id: clock_fmt_sel
+    options: ["12 hour", "24 hour"]
+    initial_option: "12 hour"
+    optimistic: true
+    restore_value: true        # kept in flash (NVS), survives reboots and OTA
     on_value:
       - component.update: lcd
   - platform: template
