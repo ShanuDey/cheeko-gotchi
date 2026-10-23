@@ -39,6 +39,27 @@ api:
 ota:
   - platform: esphome
     encryption:
+    on_begin:
+      - lambda: |-
+          id(ota_state) = 1;
+          id(ota_pct) = 0;
+      - component.update: lcd
+    on_progress:
+      - lambda: |-
+          // Redraw every 5% only: the device is busy receiving the image.
+          const int p = (int) x;
+          if (p / 5 != id(ota_pct) / 5 || p >= 100) {
+            id(ota_pct) = p;
+            id(lcd).update();
+          }
+    on_error:
+      - lambda: |-
+          id(ota_state) = 2;
+      - component.update: lcd
+      - delay: 5s
+      - lambda: |-
+          id(ota_state) = 0;
+      - component.update: lcd
 
 wifi:
   ssid: !secret wifi_ssid
@@ -97,10 +118,28 @@ display:
     lambda: |-
       const Color BG(0, 0, 0), FG(255, 255, 255), ACCENT(0, 200, 255), DIM(130, 130, 130);
       it.fill(BG);
-      const bool speaking = id(gotchi_player).state == media_player::MEDIA_PLAYER_STATE_PLAYING;
+
+      // Firmware update: progress bar replaces everything else.
+      if (id(ota_state) != 0) {
+        if (id(ota_state) == 2) {
+          it.print(120, 120, id(font_med), Color(255, 80, 80), TextAlign::TOP_CENTER, "Update failed");
+          return;
+        }
+        const int pct = id(ota_pct);
+        it.print(120, 80, id(font_med), ACCENT, TextAlign::TOP_CENTER, "Updating");
+        it.rectangle(20, 140, 200, 18, DIM);
+        it.filled_rectangle(22, 142, (196 * pct) / 100, 14, ACCENT);
+        it.printf(120, 175, id(font_med), FG, TextAlign::TOP_CENTER, "%d%%", pct);
+        it.print(120, 250, id(font_small), DIM, TextAlign::TOP_CENTER, "Don't unplug");
+        return;
+      }
+
+      const uint32_t up = millis();
+      const bool booting = up < 2600;                        // wake-up animation after power on
+      const bool speaking = !booting && id(gotchi_player).state == media_player::MEDIA_PLAYER_STATE_PLAYING;
       int page = id(page_sel).active_index().value_or(0);   // 0 Face, 1 Clock, 2 Message
-      const int expr = id(face_sel).active_index().value_or(0);  // 0 happy 1 sad 2 sleepy 3 surprised
-      if (speaking) page = 0;                                // face talks while audio plays
+      const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);  // 0 happy 1 sad 2 sleepy 3 surprised
+      if (speaking || booting) page = 0;                     // face talks while audio plays
 
       if (page == 0) {
         const int cx = 120, ey = 110;
@@ -125,11 +164,14 @@ display:
           it.filled_circle(cx - 45, ey, 9, ACCENT);
           it.filled_circle(cx + 45, ey, 9, ACCENT);
         } else {
-          it.filled_circle(cx - 45, ey, 16, ACCENT);
-          it.filled_circle(cx + 45, ey, 16, ACCENT);
+          const int er = (booting && up < 1200) ? 2 + (int) (14 * up / 1200) : 16;   // eyes open on boot
+          it.filled_circle(cx - 45, ey, er, ACCENT);
+          it.filled_circle(cx + 45, ey, er, ACCENT);
         }
         // Mouth
-        if (speaking) {
+        if (booting && up < 1200) {
+          // eyes still opening, no mouth yet
+        } else if (speaking) {
           it.filled_circle(cx, 200, 10 + ((millis() / 180) % 3) * 8, ACCENT);
         } else if (expr == 0) {
           curve(185, 55, 30, 1);
@@ -141,6 +183,7 @@ display:
           it.filled_circle(cx, 205, 20, ACCENT);
         }
         if (speaking) it.print(cx, 262, id(font_small), DIM, TextAlign::TOP_CENTER, "speaking...");
+        if (booting && up >= 1200) it.print(cx, 255, id(font_med), ACCENT, TextAlign::TOP_CENTER, "Hello!");
       } else if (page == 1) {
         auto now = id(ha_time).now();
         if (now.is_valid()) {
@@ -366,9 +409,19 @@ globals:
   - id: was_speaking
     type: bool
     initial_value: "false"
+  - id: ota_state              # 0 idle, 1 updating, 2 failed
+    type: int
+    initial_value: "0"
+  - id: ota_pct
+    type: int
+    initial_value: "0"
 
 interval:
-  - interval: 200ms            # animate the talking mouth while audio plays, plus one redraw when it stops
+  - interval: 100ms            # frames for the boot animation (first ~2.6 s after power on)
+    then:
+      - lambda: |-
+          if (millis() < 2800) id(lcd).update();
+  - interval: 200ms           # animate the talking mouth while audio plays, plus one redraw when it stops
     then:
       - lambda: |-
           const bool playing = id(gotchi_player).state == media_player::MEDIA_PLAYER_STATE_PLAYING;
