@@ -1,0 +1,298 @@
+# cgotchi control dashboard for Home Assistant. Paste into a dashboard's raw configuration editor.
+# Needs Mushroom, layout-card and card-mod (HACS). Entity IDs use the cgotchi_ prefix: if your
+# device or area name differs (e.g. <area>_cheeko_), find and replace "cgotchi_" with yours.
+# See ../docs/dashboard.md.
+title: cgotchi control
+views:
+  - title: cgotchi control
+    path: control
+    icon: mdi:robot-happy
+    type: custom:grid-layout
+    layout:
+      grid-template-columns: repeat(auto-fit, minmax(max(340px, 24%), 1fr))
+      grid-gap: 14px
+      margin: 12px
+    cards:
+      # ---------------------------------------------------------------- header
+      - view_layout:
+          grid-column: 1 / -1
+        type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Cheeko Gotchi
+            subtitle: Display, voice and audio
+            card_mod:
+              style: ".title,.subtitle{text-align:center;}"
+          - type: custom:mushroom-chips-card
+            alignment: center
+            chips:
+              - type: template
+                entity: assist_satellite.cgotchi_assist_satellite
+                icon: mdi:microphone-message
+                icon_color: "{{ 'blue' if is_state(entity,'idle') else 'orange' }}"
+                content: "{{ states(entity) | title }}"
+              - type: template
+                entity: switch.cgotchi_wake_word_mode
+                icon: mdi:ear-hearing
+                icon_color: "{{ 'green' if is_state(entity,'on') else 'grey' }}"
+                content: "Wake word {{ 'on' if is_state(entity,'on') else 'off' }}"
+                tap_action:
+                  action: toggle
+              - type: template
+                entity: media_player.cgotchi_speaker
+                icon: mdi:volume-high
+                icon_color: indigo
+                content: "{{ (state_attr(entity,'volume_level')*100) | round(0) if state_attr(entity,'volume_level') is not none else '-' }}%"
+              - type: template
+                entity: select.cgotchi_display_page
+                icon: mdi:monitor-dashboard
+                icon_color: cyan
+                content: "{{ states(entity) }}"
+              - type: template
+                entity: select.cgotchi_face_expression
+                icon: "{{ {'Happy':'mdi:emoticon-happy-outline','Sad':'mdi:emoticon-sad-outline','Sleepy':'mdi:sleep','Surprised':'mdi:emoticon-excited-outline'}.get(states(entity),'mdi:emoticon-outline') }}"
+                icon_color: pink
+                content: "{{ states(entity) }}"
+              - type: template
+                entity: light.cgotchi_backlight
+                icon: mdi:brightness-6
+                icon_color: "{{ 'amber' if is_state(entity,'on') else 'grey' }}"
+                content: "{{ ((state_attr(entity,'brightness') or 0)/2.55) | round(0) }}%"
+
+      # --------------------------------------------------------------- speaker
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Speaker
+            subtitle: Volume and playback
+            card_mod:
+              style: "ha-card{padding:4px 8px 0;}"
+          - type: custom:mushroom-media-player-card
+            entity: media_player.cgotchi_speaker
+            use_media_info: true
+            show_volume_level: true
+            volume_controls: [volume_mute, volume_set, volume_buttons]
+            media_controls: [play_pause_stop]
+            collapsible_controls: false
+            fill_container: true
+
+      # --------------------------------------------------------------- display
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Display
+            subtitle: Screen and backlight
+            card_mod:
+              style: "ha-card{padding:4px 8px 0;}"
+          - type: custom:mushroom-select-card
+            entity: select.cgotchi_display_page
+            name: Page
+            icon: mdi:monitor-dashboard
+            fill_container: true
+          - type: custom:mushroom-light-card
+            entity: light.cgotchi_backlight
+            name: Backlight
+            show_brightness_control: true
+            use_light_color: false
+            collapsible_controls: false
+            fill_container: true
+
+      # ----------------------------------------------------------------- clock
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Clock
+            subtitle: Clock page
+            card_mod:
+              style: "ha-card{padding:4px 8px 0;}"
+          - type: custom:mushroom-select-card
+            entity: select.cgotchi_clock_format
+            name: Clock format
+            icon: mdi:clock-outline
+            fill_container: true
+
+      # ------------------------------------------------------------------ face
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Face
+            subtitle: Expression and color
+            card_mod:
+              style: "ha-card{padding:4px 8px 0;}"
+          - type: grid
+            columns: 2
+            square: false
+            cards:
+              - type: custom:mushroom-select-card
+                entity: select.cgotchi_face_expression
+                name: Expression
+                icon: mdi:emoticon-outline
+                fill_container: true
+              - type: custom:mushroom-select-card
+                entity: select.cgotchi_face_color_preset
+                name: Color preset
+                icon: mdi:palette
+                fill_container: true
+          - type: custom:mushroom-light-card
+            entity: light.cgotchi_face_color
+            name: Face color
+            show_brightness_control: false
+            show_color_control: true
+            use_light_color: true
+            collapsible_controls: false
+            fill_container: true
+
+      # ------------------------------------------------------ voice assistant
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Voice assistant
+            subtitle: Satellite, wake word and pipeline
+            card_mod:
+              style: "ha-card{padding:4px 8px 0;}"
+          - type: grid
+            columns: 2
+            square: false
+            cards:
+              - type: custom:mushroom-entity-card
+                entity: assist_satellite.cgotchi_assist_satellite
+                name: Satellite
+                icon: mdi:account-voice
+                primary_info: name
+                secondary_info: state
+                layout: horizontal
+                fill_container: true
+              - type: custom:mushroom-template-card
+                entity: switch.cgotchi_wake_word_mode
+                primary: Wake word mode
+                secondary: "{{ 'Listening' if is_state(entity,'on') else 'Push to talk' }}"
+                icon: mdi:microphone
+                icon_color: "{{ 'green' if is_state(entity,'on') else 'grey' }}"
+                layout: horizontal
+                tap_action:
+                  action: toggle
+                fill_container: true
+          - type: grid
+            columns: 2
+            square: false
+            cards:
+              - type: custom:mushroom-select-card
+                entity: select.cgotchi_wake_word
+                name: Wake word
+                icon: mdi:account-voice
+                fill_container: true
+              - type: custom:mushroom-select-card
+                entity: select.cgotchi_wake_word_2
+                name: Wake word 2
+                icon: mdi:account-voice
+                fill_container: true
+              - type: custom:mushroom-select-card
+                entity: select.cgotchi_assistant
+                name: Assistant
+                icon: mdi:assistant
+                fill_container: true
+              - type: custom:mushroom-select-card
+                entity: select.cgotchi_assistant_2
+                name: Assistant 2
+                icon: mdi:assistant
+                fill_container: true
+          - type: custom:mushroom-select-card
+            entity: select.cgotchi_finished_speaking_detection
+            name: Finished speaking
+            icon: mdi:timer-sand
+            fill_container: true
+
+      # --------------------------------------------------------------- message
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Message screen
+            subtitle: Tap to edit
+            card_mod:
+              style: "ha-card{padding:4px 8px 0;}"
+          - type: custom:mushroom-entity-card
+            entity: text.cgotchi_message_title
+            name: Title
+            icon: mdi:format-title
+            primary_info: name
+            secondary_info: state
+            layout: horizontal
+            tap_action:
+              action: more-info
+            fill_container: true
+          - type: custom:mushroom-entity-card
+            entity: text.cgotchi_message_body
+            name: Body
+            icon: mdi:message-text
+            primary_info: name
+            secondary_info: state
+            layout: horizontal
+            tap_action:
+              action: more-info
+            fill_container: true
+
+      # --------------------------------------------------------------- webview
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: WebView
+            card_mod:
+              style: "ha-card{padding:4px 8px 0;}"
+          - type: custom:mushroom-entity-card
+            entity: text.cgotchi_webview_url
+            name: URL
+            icon: mdi:web
+            primary_info: name
+            secondary_info: state
+            layout: horizontal
+            tap_action:
+              action: more-info
+            fill_container: true
+          - type: custom:mushroom-entity-card
+            entity: sensor.cgotchi_webview_current_url
+            name: Current
+            icon: mdi:link-variant
+            primary_info: name
+            secondary_info: state
+            layout: horizontal
+            fill_container: true
+          - type: custom:mushroom-entity-card
+            entity: switch.cgotchi_webview_flip_x
+            name: Flip X
+            icon: mdi:flip-horizontal
+            tap_action:
+              action: toggle
+            fill_container: true
+
+      # --------------------------------------------------------- display frame
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Display frame
+            card_mod:
+              style: "ha-card{padding:4px 8px 0;}"
+          - type: custom:mushroom-select-card
+            entity: select.cgotchi_display_frame_source
+            name: Source
+            icon: mdi:image-frame
+            fill_container: true
+          - type: custom:mushroom-entity-card
+            entity: text.cgotchi_display_frame_url
+            name: Custom URL
+            icon: mdi:link
+            primary_info: name
+            secondary_info: none
+            layout: horizontal
+            tap_action:
+              action: more-info
+            fill_container: true
+
+      # ------------------------------------------------------------- mic level
+      # The mic sensor only measures while the voice assistant is capturing, so this is mostly blank.
+      - view_layout:
+          grid-column: 1 / -1
+        type: history-graph
+        title: Mic level
+        hours_to_show: 6
+        entities:
+          - sensor.cgotchi_mic_level

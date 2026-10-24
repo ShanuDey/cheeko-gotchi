@@ -28,6 +28,7 @@ You need Home Assistant with the **ESPHome Device Builder** add-on.
 - **Voice assistant:** hold Volume Up to talk, or turn on Wake Word Mode.
 - **Speaker and mic** as HA entities, volume buttons, dimmable backlight.
 - **Wireless, encrypted OTA** with an on-screen progress bar.
+- **Dashboard:** a ready-made Home Assistant control page, see [docs/dashboard.md](docs/dashboard.md).
 
 ## Docs
 
