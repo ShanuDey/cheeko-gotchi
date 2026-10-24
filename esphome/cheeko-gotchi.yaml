@@ -112,7 +112,7 @@ display:
     invert_colors: false
     transform:                 # all three keys are required once transform is used
       swap_xy: false
-      mirror_x: true
+      mirror_x: false
       mirror_y: false
     update_interval: never     # redraws come from entity changes, the minute tick and the talking-mouth interval
     lambda: |-
@@ -480,22 +480,9 @@ binary_sensor:
     on_press:
       - media_player.volume_down: gotchi_player
 
-  - platform: gpio
-    name: "Middle Button"
-    pin:
-      number: 3
-      mode:
-        input: true
-        pulldown: true         # active HIGH (not inverted); hardware_test also enables the internal pulldown
-    filters:
-      - delayed_on_off: 20ms
+# No middle-button sensor: it feeds the power circuit and never reaches GPIO 3 on this unit (hardware_test's PWR indicator stays dark too).
 
-# Debug for the middle button: log the raw GPIO 3 level whenever it changes.
-# If this never prints a change while you press it, the signal isn't reaching GPIO 3.
 globals:
-  - id: last_gpio3
-    type: int
-    initial_value: "-1"
   - id: was_speaking
     type: bool
     initial_value: "false"
@@ -522,11 +509,25 @@ interval:
                                mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING;
           if (playing || id(va_state) == 1 || id(va_state) == 2 || playing != id(was_speaking)) id(lcd).update();
           id(was_speaking) = playing;
-  - interval: 50ms
+  # Touch poll: a new tap anywhere shows the next page. ESPHome's cst816 driver rejects the
+  # CST810 ("Unknown chip ID"), so read it directly (I2C 0x15, SKILL.md section 5).
+  - interval: 20ms
     then:
       - lambda: |-
-          int lvl = gpio_get_level((gpio_num_t) 3);
-          if (lvl != id(last_gpio3)) {
-            id(last_gpio3) = lvl;
-            ESP_LOGW("gpio3", "raw level = %d", lvl);
+          static i2c::I2CDevice touch;
+          static bool init = false, down = false;
+          static uint32_t last_tap = 0;
+          if (!init) {
+            touch.set_i2c_bus(id(bus_a));
+            touch.set_i2c_address(0x15);
+            init = true;
           }
+          uint8_t d[5] = {};
+          if (touch.read_register(0x02, d, sizeof(d)) != i2c::ERROR_OK) return;
+          const bool now = (d[0] & 0x0f) != 0;                    // finger count
+          if (now && !down && millis() - last_tap > 400) {
+            last_tap = millis();
+            ESP_LOGI("touch", "tap raw x=%d y=%d", ((d[1] & 0x0f) << 8) | d[2], ((d[3] & 0x0f) << 8) | d[4]);
+            id(page_sel).make_call().select_next(true).perform();
+          }
+          down = now;
