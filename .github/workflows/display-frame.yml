@@ -1,18 +1,20 @@
-name: screenshot-service image
+name: display-frame image
 
-# Builds esphome/screenshot-service and publishes it to GitHub Container Registry
-# as ghcr.io/<owner>/cheeko-screenshot, so Dockge can pull it without building.
 on:
   push:
     branches: [main, dev]
     paths:
-      - esphome/screenshot-service/**
-      - .github/workflows/screenshot-service.yml
+      - esphome/display-frame/**
+      - .github/workflows/display-frame.yml
   workflow_dispatch:
 
 permissions:
   contents: read
   packages: write
+
+concurrency:
+  group: display-frame-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   image:
@@ -31,15 +33,16 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/cheeko-screenshot
+          images: ghcr.io/${{ github.repository_owner }}/display-frame
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=alpha,enable=${{ github.ref == 'refs/heads/dev' }}
+            type=raw,value=beta,enable=${{ github.ref == 'refs/heads/dev' }}
+            type=raw,value=alpha,enable=${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
             type=sha
 
       - uses: docker/build-push-action@v6
         with:
-          context: esphome/screenshot-service
+          context: esphome/display-frame
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

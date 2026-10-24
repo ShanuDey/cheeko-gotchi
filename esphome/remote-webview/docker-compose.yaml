@@ -1,0 +1,43 @@
+# Remote WebView server: renders a web page (e.g. an HA dashboard) in headless
+# Chromium and streams changed JPEG tiles to the device over WebSocket.
+# Used by esphome/webview-test.yaml. Upstream: github.com/strange-v/RemoteWebViewServer
+services:
+  remote-webview:
+    image: strangev/remote-webview-server:latest
+    container_name: remote-webview
+    init: true
+    ports:
+      - 8081:8081     # WebSocket stream, the device connects here
+      - 9222:9222     # DevTools proxy, used once to log in to Home Assistant
+    environment:
+      WS_PORT: 8081
+      DEBUG_PORT: 9221
+      HEALTH_PORT: 18080
+      TILE_SIZE: 16
+      FULL_FRAME_TILE_COUNT: 1
+      FULL_FRAME_AREA_THRESHOLD: 0.5
+      FULL_FRAME_EVERY: 50
+      EVERY_NTH_FRAME: 1
+      MIN_FRAME_INTERVAL_MS: 80
+      JPEG_QUALITY: 85
+      MAX_BYTES_PER_MESSAGE: 61440
+      USER_DATA_DIR: /pw-data
+      BROWSER_LOCALE: en-US
+    volumes:
+      - pw-data:/pw-data    # keeps the HA login between restarts
+    shm_size: 1gb           # Chromium crashes on Docker's default 64 MB /dev/shm
+    restart: unless-stopped
+
+  # Chromium's DevTools port only listens on localhost inside the container.
+  # This proxy shares its network and republishes it on 9222.
+  debug-proxy:
+    image: alpine/socat
+    container_name: remote-webview-debug-proxy
+    network_mode: service:remote-webview
+    command: tcp-listen:9222,fork,reuseaddr tcp-connect:127.0.0.1:9221
+    depends_on:
+      - remote-webview
+    restart: unless-stopped
+
+volumes:
+  pw-data:

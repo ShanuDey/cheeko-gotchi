@@ -12,14 +12,14 @@ Device name: `cgotchi`. Config: [cheeko-gotchi.yaml](cheeko-gotchi.yaml).
 |---|---|
 | Wi-Fi, HA API, wireless OTA | works |
 | Backlight (dimmable light) | works |
-| Volume up/down buttons | works: each short press steps the speaker volume by 10% (min 10%) |
+| Volume up/down buttons | works: each short press steps the speaker volume by 5%; 0 to 100% is rescaled onto the audible, undistorted DAC range (0.3 to 0.8) |
 | Voice assistant | added: hold Volume Up (about 1 s) to talk, push-to-talk only. Listening, thinking and speaking each have their own face. See Voice assistant below. |
 | Boot animation | works: eyes open and "Hello!" for the first ~2.6 s after power on |
 | On-screen OTA progress | works: "Updating" with a percentage, or "Update failed" |
 | Charging detect (GPIO 37) | not possible, see Notes |
 | Middle button (GPIO 3) | not working, see Troubleshooting |
 | Display: Face, Clock and Message pages, talking mouth while audio plays | works |
-| Video page (JPEG snapshots from a URL) | works: tested with the screenshot-service clock; see Video below |
+| Display Frame page (JPEG snapshots from a URL) | works: tested with the display-frame clock; see Display Frame below |
 | Clock format (12/24 hour) | works: **Clock Format** select; the choice is stored in flash and survives power-off and OTA |
 | Speaker (HA media player), mic level | works |
 | Touch (CST810), accelerometer (LIS2DH12) | not added yet |
@@ -65,33 +65,45 @@ unreliable.
 The panel is a 240x296 rectangle, but the bezel and glass have rounded corners
 that hide the pixels in all four corners (the radius is not measured; about
 25 to 30 px is a guess). Keep text, icons and anything important about 16 to
-20 px away from the corners, in display lambdas, video frames and website
+20 px away from the corners, in display lambdas, display frames and website
 screenshots alike. The Face, Clock and Message pages are centred and already
 fit. Content in the middle of each edge stays visible.
 
-## Video (JPEG snapshots)
+## Display Frame (JPEG snapshots)
 
-ESPHome has no video player, so the **Video** page shows JPEG snapshots fetched
+ESPHome has no video player, so the **Display Frame** page shows JPEG snapshots fetched
 one after another over HTTP (a few frames per second, no audio).
 
 1. Serve JPEG frames already scaled to 240x296. The device only decodes; it
    does not resize. Leave a safe margin for the rounded corners (see above).
-   [screenshot-service/](screenshot-service/README.md) does this: it renders a
+   [display-frame/](display-frame/README.md) does this: it renders a
    page (a built-in clock by default) in headless Chromium and serves it at
-   `http://<docker-host-ip>:8080/frame.jpg`.
-2. In HA, set **Video URL** on the device to the frame address.
-3. Turn **Video Stream** on. It switches to the Video page and starts the loop.
-   Turning it off returns to the Face page.
+   `http://<docker-host-ip>:28240/frame.jpg`.
+2. Put the service address in `secrets.yaml` as `display_frame_server`
+   (`http://<docker-host-ip>:28240`, use the IP) and the default page as
+   `display_frame_url`. In HA, **Display Frame Source** picks a page bundled with the service
+   (the list comes from the service a few seconds after boot) or `Custom`,
+   which renders whatever **Display Frame URL** holds (sent as `?url=`). No reflash needed.
+3. Long press Volume Down until the Display Frame page shows (the order is Face,
+   Clock, Message, Display Frame, WebView), or set **Display Page** to Display Frame
+   in HA. Fetching runs only while that page is showing, so choosing another page
+   stops it.
+
+The page shows "Loading..." until the first frame decodes. After 3 failed
+fetches in a row (server down, wrong port, malformed or empty URL) it shows
+"No frame" with "check Frame URL" (or `display_frame_server`). The device keeps retrying every second and the
+picture returns once the server answers. Touch does nothing on this page; change
+page with Volume Down (long press) or **Display Page** in HA.
 
 The server must not send `Last-Modified` or allow caching (send
 `Cache-Control: no-store`). Otherwise the device sends `If-Modified-Since`,
 gets `304 Not Modified`, and the log fills with `HTTP Request failed; Code: 304`.
 The page select is not restored on boot, so a reboot lands on Face.
 
-The YAML never starts the next download from inside `on_download_finished`; it
-waits 50 ms first. ESPHome tears down the connection right after that callback,
-so a download started inside it is aborted and the image is released (frozen
-frame, then a black screen).
+The next download is started by the `fetch_next` script, never from inside
+`on_download_finished` or `on_error`. ESPHome tears down the connection right
+after those callbacks, so a download started inside them is aborted and the
+image is released (frozen frame, then a black screen).
 
 ## Validate before installing
 
@@ -146,7 +158,8 @@ bootloader at `0x410000`. To keep a backup first:
   `Assist Pipeline ended` when it finishes.
 - HA: the device page has **Backlight**, the **Speaker** media player,
   **Display Page**, **Clock Format** (12 or 24 hour), **Face Expression**,
-  **Message Title/Body**, **Mic Level**
+  **Face Color** (colour picker for the face only) with **Face Color Preset**
+  (Blue, Green, Pink, ... or Custom), **Message Title/Body**, **Mic Level**
   and three button sensors. Mic Level only updates while something else is
   capturing audio (it is passive).
 
@@ -198,8 +211,8 @@ bootloader at `0x410000`. To keep a backup first:
   the board has no fuel gauge on I2C and no known battery-voltage ADC pin.
 - A failed OTA that resets before boot completes rolls back to the previous
   build. Check `compiled on` in the log to see which build is running.
-- Saved settings: **Clock Format**, **Face Expression**, **Message Title/Body**
-  and **Video URL** use `restore_value: true`, so they live in flash and
+- Saved settings: **Clock Format**, **Face Expression**, **Face Color Preset**, **Message Title/Body**
+  and **Display Frame URL** use `restore_value: true`, so they live in flash and
   survive power-off, reboots and OTA. Renaming one or changing its options in
   the YAML resets it to the default once; a full flash erase clears them all.
 - There is no battery-backed clock. After power-off the Clock page shows

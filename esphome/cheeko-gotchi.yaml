@@ -1,9 +1,13 @@
-# Stage 2/3: hardware bring-up. Display, speaker, mic, buttons, backlight.
-# Pins come from SKILL.md section 2 (verified on real hardware).
+# Display frame service the Display Frame page fetches frames from, e.g. "http://192.168.29.127:28240"
+# (secrets.yaml). The page it renders is the "Display Frame URL" entity, editable from HA.
+substitutions:
+  display_frame_server: !secret display_frame_server
 
 esphome:
   name: cgotchi
   friendly_name: Cheeko
+  includes:
+    - face_colors.h
   # GPIO 2 latches power OFF if driven HIGH (SKILL.md Gotcha 8). Force it LOW
   # as early as possible so the device never cuts its own power.
   on_boot:
@@ -22,6 +26,26 @@ esp32:
   flash_size: 16MB          # matches firmware/hardware_test
   framework:
     type: esp-idf
+    # Needed by the remote_webview component (WebSocket client + JPEG tile decoder).
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
+      CONFIG_SPIRAM_RODATA: y
+    components:
+      - name: "espressif/esp_websocket_client"
+        ref: 1.5.0
+      - name: "bitbank2/jpegdec"
+        source: https://github.com/strange-v/jpegdec-esphome
+
+# Patched copy of github.com/strange-v/RemoteWebViewClient: adds active/set_active() so the
+# web page and the lambda-drawn pages can share the panel, and flip_x. See remote_webview/README.md.
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [remote_webview]
 
 # Octal PSRAM is mandatory on this board (SKILL.md Gotcha 1).
 psram:
@@ -79,6 +103,34 @@ i2c:
   frequency: 400kHz
   scan: true     # prints every chip it finds in the log; expect 0x15 0x18 0x19 0x40
 
+# CST810 touch. ESPHome's cst816 driver rejects its chip ID, so skip the probe; the register
+# layout (touch count at 0x02, X at 0x03/04, Y at 0x05/06) matches. Raw axes are swapped vs the
+# display (SKILL.md section 5: raw Y -> screen X, raw X -> screen Y inverted). The calibration is
+# a first guess from that section's measurements; tune it with the touch log (VERBOSE) if taps
+# on the WebView page land off target.
+touchscreen:
+  - platform: cst816
+    id: touch
+    i2c_id: bus_a
+    skip_probe: true
+    update_interval: 20ms
+    calibration:
+      x_min: 0
+      x_max: 300
+      y_min: 0
+      y_max: 260
+    transform:
+      swap_xy: false
+      mirror_x: false
+      mirror_y: false
+    on_touch:
+      - logger.log:
+          level: VERBOSE
+          format: "touch x=%d y=%d raw x=%d y=%d"
+          args: ["touch.x", "touch.y", "touch.x_raw", "touch.y_raw"]
+    # Taps belong to the WebView page (forwarded by remote_webview). Pages change with a long
+    # press of Volume Down or the Display Page select in HA.
+
 # ---------------------------------------------------------------- display
 # 240x296 ST7789-class panel, no MISO. MADCTL 0x40 = mirror X, RGB order,
 # no inversion (SKILL.md section 4). Portrait only; landscape needs offsets.
@@ -108,15 +160,51 @@ display:
     dc_pin: 8
     reset_pin: 17
     data_rate: 40MHz
-    color_order: rgb
+    color_order: bgr           # rgb shows red and blue swapped on this unit (blue preset came out yellow)
     invert_colors: false
     transform:                 # all three keys are required once transform is used
       swap_xy: false
-      mirror_x: false
+      mirror_x: true           # MADCTL 0x40 (SKILL.md section 4); false shows every page flipped left to right
       mirror_y: false
     update_interval: never     # redraws come from entity changes, the minute tick and the talking-mouth interval
+    auto_clear_enabled: false  # the lambda fills the screen itself; the WebView page must not be cleared
     lambda: |-
       const Color BG(0, 0, 0), FG(255, 255, 255), ACCENT(0, 200, 255), DIM(130, 130, 130);
+
+      // Volume popup: a bar and percentage for 1.5 s after a volume button press (show_volume
+      // script). Kept inside the bottom safe margin because the screen corners are cropped.
+      const bool vol_vis = (int32_t) (id(vol_until) - millis()) > 0;
+      auto draw_volume = [&]() {
+        const int pct = (int) roundf(id(gotchi_player).volume * 100.0f);
+        it.filled_rectangle(12, 244, 216, 38, BG);
+        it.rectangle(12, 244, 216, 38, DIM);
+        it.rectangle(24, 255, 130, 16, FG);
+        it.filled_rectangle(26, 257, (126 * pct) / 100, 12, ACCENT);
+        it.printf(192, 263, id(font_small), FG, TextAlign::CENTER, "%d%%", pct);
+      };
+
+      const uint32_t up = millis();
+      const bool booting = up < 2600;                        // wake-up animation after power on
+      // Voice replies play as announcements (ANNOUNCING), media from HA as PLAYING.
+      const auto mp = id(gotchi_player).state;
+      const bool speaking = !booting && (mp == media_player::MEDIA_PLAYER_STATE_PLAYING ||
+                                         mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+      int page = id(page_sel).active_index().value_or(0);   // 0 Face, 1 Clock, 2 Message, 3 Display Frame, 4 WebView
+      const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);  // 0 happy 1 sad 2 sleepy 3 surprised
+      const int va = id(va_state);                           // 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
+
+      // The WebView page is drawn by the remote_webview component straight to the panel, so
+      // this lambda must draw nothing while it shows. The voice assistant, audio and firmware
+      // updates take the screen back: set_active(false) waits for a tile already being drawn.
+      const bool webview = page == 4 && va == 0 && !booting && !speaking && id(ota_state) == 0;
+      id(rwv).set_active(webview && !vol_vis);
+      if (webview) {
+        // While the volume popup shows, the tiles are paused and only the popup is drawn over
+        // the page; set_active(true) then requests a full frame, which repaints the page.
+        if (vol_vis) draw_volume();
+        return;
+      }
+
       it.fill(BG);
 
       // Firmware update: progress bar replaces everything else.
@@ -134,24 +222,26 @@ display:
         return;
       }
 
-      const uint32_t up = millis();
-      const bool booting = up < 2600;                        // wake-up animation after power on
-      // Voice replies play as announcements (ANNOUNCING), media from HA as PLAYING.
-      const auto mp = id(gotchi_player).state;
-      const bool speaking = !booting && (mp == media_player::MEDIA_PLAYER_STATE_PLAYING ||
-                                         mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
-      int page = id(page_sel).active_index().value_or(0);   // 0 Face, 1 Clock, 2 Message, 3 Video
-      const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);  // 0 happy 1 sad 2 sleepy 3 surprised
-      const int va = id(va_state);                           // 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
-      // Video: latest JPEG frame, full screen. Audio can play over it, but the voice
-      // assistant still takes the screen (falls through to the face below).
+      // Audio can play over the frame, but the voice assistant still takes the screen.
       if (page == 3 && va == 0 && !booting) {
-        it.image(0, 0, id(video_img));
+        const int vs = id(frame_state);
+        if (vs == 1) {
+          it.image(0, 0, id(frame_img));
+        } else if (vs == 0) {
+          it.print(120, 140, id(font_med), DIM, TextAlign::CENTER, "Loading...");
+        } else {
+          it.print(120, 130, id(font_med), FG, TextAlign::CENTER, "No frame");
+          it.print(120, 170, id(font_small), DIM, TextAlign::CENTER, "check Frame URL");
+        }
+        if (vol_vis) draw_volume();
         return;
       }
       if (speaking || booting || va != 0) page = 0;          // face talks while audio plays
 
       if (page == 0) {
+        // The face color is chosen in HA; the clock, message and OTA screens keep the blue ACCENT.
+        const auto &fc = id(face_color).remote_values;
+        const Color ACCENT((uint8_t) (fc.get_red() * 255), (uint8_t) (fc.get_green() * 255), (uint8_t) (fc.get_blue() * 255));
         const int cx = 120, ey = 110;
         // Curved mouth: dir +1 smile, -1 frown.
         auto curve = [&](int cy, int w, int h, int dir) {
@@ -254,55 +344,108 @@ display:
         }
         if (!line.empty()) emit(line);
       }
+      if (vol_vis) draw_volume();
 
-# ------------------------------------------------------------------ video
-# Poor man's video: fetch one JPEG snapshot after another over HTTP and draw it.
-# The next fetch starts as soon as the previous frame is decoded, so the frame
-# rate is whatever the network, server and decoder allow (expect a few fps).
-# Serve frames already scaled to 240x296: the device only decodes, it does not
-# shrink. See screenshot-service/ for a ready-made frame server.
+# ------------------------------------------------------------------ frame
+# JPEG snapshots fetched one after another and drawn full screen (a few fps, no
+# audio). Frames must already be 240x296; see display-frame/.
 http_request:
   timeout: 5s
   buffer_size_rx: 4096
 
 image:
   - platform: online_image
-    id: video_img
-    url: "http://homeassistant.local:8080/frame.jpg"   # placeholder; Video URL in HA replaces it
+    id: frame_img
+    url: "http://homeassistant.local:8123/lovelace/default_view"
     format: JPEG
     type: RGB565
     resize: 240x296
-    update_interval: never     # frames are chained from on_download_finished
+    update_interval: never
     on_download_finished:
-      - if:
-          condition:
-            lambda: 'return !cached;'    # cached: server answered 304, nothing new to draw
-          then:
-            - component.update: lcd
-          else:
-            - delay: 200ms          # unchanged frame: do not spin on repeated 304s
-      # Never start the next download from inside this callback: the component
-      # tears down its connection right after it returns, which would abort the
-      # new download and release the image (black screen). The delay defers it.
-      - delay: 50ms
-      # Keep fetching only while the stream is on AND the Video page is showing (page 3),
-      # so switching pages from HA stops the background fetching.
-      - if:
-          condition:
-            lambda: 'return id(video_stream).state && id(page_sel).active_index().value_or(0) == 3;'
-          then:
-            - component.update: video_img
+      - lambda: |-
+          id(frame_state) = 1;
+          id(frame_errors) = 0;
+      - component.update: lcd
+      - script.execute:
+          id: fetch_next
+          wait_ms: !lambda 'return cached ? 250 : 50;'   # cached: server answered 304
     on_error:
+      - lambda: |-
+          // Three failures in a row, so one dropped frame does not flash "No frame".
+          if (++id(frame_errors) >= 3) id(frame_state) = 2;
+      - component.update: lcd
+      - script.execute:
+          id: fetch_next
+          wait_ms: 1000
+
+script:
+  # Volume popup: the display lambda draws the bar while vol_until is in the future, then this
+  # redraws once more so the popup disappears.
+  - id: show_volume
+    mode: restart
+    then:
+      - delay: 60ms              # let the media player apply the new volume first
+      - lambda: |-
+          id(vol_until) = millis() + 1500;
+      - component.update: lcd
+      - delay: 1560ms
+      - component.update: lcd
+  # The next download must not start inside the callbacks above: the component tears
+  # down its connection right after they return, which aborts the new download and
+  # releases the image (black screen). Running from a script defers it.
+  # Frame address = display-frame service (display_frame_server secret) + the page to render, which is the
+  # "Display Frame URL" entity so it can be changed from HA. The page is percent-encoded into ?url=.
+  - id: apply_frame_url
+    then:
+      - online_image.set_url:
+          id: frame_img
+          url: !lambda |-
+            static const char *HEX = "0123456789ABCDEF";
+            // A bundled page (preset names are [a-z0-9_-]) or, for Custom, the Display Frame URL.
+            const std::string src = id(frame_src).current_option().str();
+            if (src != "Custom") return std::string("${display_frame_server}/frame.jpg?page=") + src;
+            std::string out = std::string("${display_frame_server}") + "/frame.jpg?url=";
+            for (unsigned char c : id(frame_url).state) {
+              if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+                out += (char) c;
+              } else {
+                out += '%';
+                out += HEX[c >> 4];
+                out += HEX[c & 15];
+              }
+            }
+            return out;
+  - id: fetch_next
+    mode: restart
+    parameters:
+      wait_ms: int
+    then:
+      - delay: !lambda 'return wait_ms;'
       - if:
           condition:
-            lambda: 'return id(video_stream).state && id(page_sel).active_index().value_or(0) == 3;'
+            lambda: 'return id(page_sel).active_index().value_or(0) == 3;'
           then:
-            - delay: 1s        # back off so a dead server does not spin the CPU
-            - if:
-                condition:
-                  lambda: 'return id(video_stream).state && id(page_sel).active_index().value_or(0) == 3;'
-                then:
-                  - component.update: video_img
+            - component.update: frame_img
+
+# ---------------------------------------------------------------- webview
+# An HA dashboard rendered by the Remote WebView server (esphome/remote-webview/) and streamed
+# as JPEG tiles. Taps go to the page. Starts paused: the lambda above turns it on while the
+# WebView page shows. Long press Volume Down to change page.
+remote_webview:
+  id: rwv
+  display_id: lcd
+  server: !secret webview_server
+  url: !secret webview_url
+  active: false
+  flip_x: false              # the panel's own mirror_x covers it; see components/remote_webview/README.md
+  tile_size: 16
+  full_frame_tile_count: 1
+  max_bytes_per_msg: 61440
+  jpeg_quality: 85
+  big_endian: true
+  stats_interval: 10s
+  current_url_sensor:
+    name: "WebView Current URL"
 
 # ---------------------------------------------- display controls (from HA)
 time:
@@ -319,18 +462,38 @@ select:
   - platform: template
     name: "Display Page"
     id: page_sel
-    options: [Face, Clock, Message, Video]
+    options: [Face, Clock, Message, Display Frame, WebView]
     initial_option: Face
     optimistic: true
-    restore_value: false       # Video needs the stream switch; always boot on Face
+    restore_value: false       # always boot on Face
     on_value:
+      - lambda: |-
+          if (x == "Display Frame") {
+            id(frame_state) = 0;
+            id(frame_errors) = 0;
+          }
       - component.update: lcd
-      # Back on the Video page with the stream still on: the fetch loop had stopped.
+      # Fetching runs only while this page is Display Frame: start it on entry, it stops itself on exit.
       - if:
           condition:
-            lambda: 'return x == "Video" && id(video_stream).state;'
+            lambda: 'return x == "Display Frame";'
           then:
-            - component.update: video_img
+            - script.execute: apply_frame_url
+  # Pages bundled with the display-frame service (its /presets list replaces these options a few
+  # seconds after boot) or Custom, which uses the Display Frame URL text below.
+  - platform: template
+    name: "Display Frame Source"
+    id: frame_src
+    options: [clock, Custom]
+    initial_option: clock
+    optimistic: true
+    restore_value: false       # the option list changes, so a saved index would not be reliable
+    on_value:
+      - if:
+          condition:
+            lambda: 'return id(page_sel).active_index().value_or(0) == 3;'
+          then:
+            - script.execute: apply_frame_url
   - platform: template
     name: "Clock Format"
     id: clock_fmt_sel
@@ -340,6 +503,24 @@ select:
     restore_value: true        # kept in flash (NVS), survives reboots and OTA
     on_value:
       - component.update: lcd
+  - platform: template
+    name: "Face Color Preset"
+    id: face_preset_sel
+    options: [Blue, Green, Pink, Orange, Purple, Red, Yellow, White, Custom]
+    initial_option: Blue
+    optimistic: true
+    restore_value: true
+    on_value:
+      - lambda: |-
+          // Custom keeps whatever the Face Color picker holds.
+          for (const auto &p : FACE_PRESETS) {
+            if (x == p.name) {
+              auto call = id(face_color).turn_on();
+              call.set_rgb(p.r, p.g, p.b);
+              call.set_transition_length(0);
+              call.perform();
+            }
+          }
   - platform: template
     name: "Face Expression"
     id: face_sel
@@ -351,14 +532,37 @@ select:
       - component.update: lcd
 
 text:
+  # Change the dashboard from HA without reflashing (not kept across reboots; the
+  # webview_url substitution is the default).
   - platform: template
-    name: "Video URL"
-    id: video_url
+    name: "WebView URL"
+    id: webview_url_text
+    mode: text
+    max_length: 255
+    optimistic: true
+    restore_value: false
+    initial_value: !secret webview_url
+    set_action:
+      - lambda: |-
+          if (!id(rwv).open_url(x)) {
+            id(rwv).set_url(x);
+            ESP_LOGI("webview", "not connected yet, URL queued");
+          }
+  - platform: template
+    name: "Display Frame URL"
+    id: frame_url
     mode: text
     max_length: 255
     optimistic: true
     restore_value: true
-    initial_value: "http://homeassistant.local:8080/frame.jpg"
+    initial_value: !secret display_frame_url
+    set_action:
+      # Takes effect at once when the Display Frame page is showing; otherwise on next entry.
+      - if:
+          condition:
+            lambda: 'return id(page_sel).active_index().value_or(0) == 3;'
+          then:
+            - script.execute: apply_frame_url
   - platform: template
     name: "Message Title"
     id: msg_title
@@ -441,23 +645,26 @@ media_player:
   - platform: speaker
     name: "Speaker"
     id: gotchi_player
-    volume_increment: 0.1      # step per volume-button press
-    volume_min: 0.1            # never fully mute by button
-    volume_max: 1.0
+    volume_increment: 0.05     # step per volume-button press (20 even steps, about 3 dB each)
+    # The ES8311 register is linear in dB (0.75 = 0 dB): below 0.3 is inaudible, above 0.8 clips.
+    # The player rescales its 0-100% into this window, so every step is audible and clean.
+    volume_min: 0.3
+    volume_max: 0.8
     announcement_pipeline:
       speaker: spk
       format: FLAC
       sample_rate: 16000
       num_channels: 1
 
-# Voice assistant: hold Volume Up to talk. HA's Assist pipeline (speech to text,
-# conversation agent, text to speech) is chosen in the device's settings in HA.
+# Voice assistant: hold Volume Up to talk, or turn on the "Wake Word Mode" switch in HA to
+# listen for the wake word instead. HA's Assist pipeline (speech to text, conversation
+# agent, text to speech, and the openWakeWord model) is chosen in the device's settings in HA.
 # Replies play through the Speaker media player above.
 voice_assistant:
   id: va
   microphone: mic
   media_player: gotchi_player
-  use_wake_word: false
+  use_wake_word: true          # lets HA offer a wake word for this device; only streams while Wake Word Mode is on
   noise_suppression_level: 2
   auto_gain: 31dBFS
   volume_multiplier: 2.0
@@ -492,6 +699,18 @@ output:
     id: backlight_pwm
     pin: 13                    # LCD backlight enable, HIGH = on
     frequency: 1000Hz
+  - platform: template
+    id: face_r
+    type: float
+    write_action: []
+  - platform: template
+    id: face_g
+    type: float
+    write_action: []
+  - platform: template
+    id: face_b
+    type: float
+    write_action: []
 
 light:
   - platform: monochromatic
@@ -501,24 +720,57 @@ light:
     restore_mode: RESTORE_DEFAULT_ON
     default_transition_length: 0s   # no fade, snappy dimming
 
+  # Face color picker. The outputs are dummies: the light only stores the color the display reads.
+  - platform: rgb
+    name: "Face Color"
+    id: face_color
+    red: face_r
+    green: face_g
+    blue: face_b
+    restore_mode: RESTORE_DEFAULT_ON
+    default_transition_length: 0s
+    initial_state:
+      color_mode: rgb
+      red: 0%
+      green: 78%
+      blue: 100%
+    on_state:
+      - lambda: |-
+          // Mirror the picker into the preset select: a matching preset, else Custom.
+          const auto &v = id(face_color).remote_values;
+          const char *match = "Custom";
+          size_t match_idx = sizeof(FACE_PRESETS) / sizeof(FACE_PRESETS[0]);   // Custom is the last option
+          for (size_t i = 0; i < match_idx; i++) {
+            const auto &p = FACE_PRESETS[i];
+            if (fabsf(v.get_red() - p.r) < 0.02f && fabsf(v.get_green() - p.g) < 0.02f &&
+                fabsf(v.get_blue() - p.b) < 0.02f) {
+              match = p.name;
+              match_idx = i;
+              break;
+            }
+          }
+          if (id(face_preset_sel).active_index().value_or(match_idx + 1) != match_idx)
+            id(face_preset_sel).make_call().set_option(match).perform();
+      - component.update: lcd
+
 switch:
-  # Start/stop the snapshot video on the Video page. Set "Video URL" first.
+  # Mirrors the WebView page left to right in software. Normally off (the display's mirror_x
+  # already orients every page); a debugging aid if only the web page ever looks flipped.
+  # Not remembered: it is off after every reboot.
   - platform: template
-    name: "Video Stream"
-    id: video_stream
+    name: "WebView Flip X"
+    id: webview_flip
     optimistic: true
     restore_mode: ALWAYS_OFF
+    entity_category: config
     turn_on_action:
-      - select.set:
-          id: page_sel
-          option: Video
-      - online_image.set_url:
-          id: video_img
-          url: !lambda 'return id(video_url).state;'
+      - lambda: |-
+          id(rwv).set_flip_x(true);
+          id(rwv).refresh();
     turn_off_action:
-      - select.set:
-          id: page_sel
-          option: Face
+      - lambda: |-
+          id(rwv).set_flip_x(false);
+          id(rwv).refresh();
 
   - platform: gpio
     id: power_off_latch
@@ -546,6 +798,7 @@ binary_sensor:
         max_length: 600ms
         then:
           - media_player.volume_up: gotchi_player
+          - script.execute: show_volume
       - min_length: 700ms        # long press: push-to-talk, press again to cancel
         max_length: 10s
         then:
@@ -564,8 +817,18 @@ binary_sensor:
       inverted: true
     filters:
       - delayed_on_off: 20ms
-    on_press:
-      - media_player.volume_down: gotchi_player
+    on_click:
+      - min_length: 20ms         # short press: volume down
+        max_length: 600ms
+        then:
+          - media_player.volume_down: gotchi_player
+          - script.execute: show_volume
+      - min_length: 700ms        # long press: next page (Face, Clock, Message, Display Frame, WebView)
+        max_length: 10s
+        then:
+          - select.next:
+              id: page_sel
+              cycle: true
 
 # No middle-button sensor: it feeds the power circuit and never reaches GPIO 3 on this unit (hardware_test's PWR indicator stays dark too).
 
@@ -582,8 +845,60 @@ globals:
   - id: ota_pct
     type: int
     initial_value: "0"
+  - id: frame_state            # 0 loading, 1 playing, 2 no frame
+    type: int
+    initial_value: "0"
+  - id: frame_errors           # consecutive failed fetches
+    type: int
+    initial_value: "0"
+  - id: frame_presets          # page names from the display-frame service, then "Custom"
+    type: std::vector<std::string>
+  - id: frame_presets_loaded
+    type: bool
+    initial_value: "false"
+  - id: vol_until              # millis() until which the volume popup shows
+    type: uint32_t
+    initial_value: "0"
 
 interval:
+  # Until it succeeds, ask the display-frame service which pages it bundles and offer them in the
+  # Display Frame Source select. Fails quietly while Wi-Fi or the service is down.
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(frame_presets_loaded);'
+          then:
+            - http_request.get:
+                url: "${display_frame_server}/presets"
+                capture_response: true
+                max_response_buffer_size: 512
+                on_response:
+                  then:
+                    - lambda: |-
+                        id(frame_presets).clear();
+                        if (response->status_code == 200) {
+                          size_t start = 0;
+                          while (start < body.size()) {
+                            size_t end = body.find('\n', start);
+                            if (end == std::string::npos) end = body.size();
+                            if (end > start) id(frame_presets).push_back(body.substr(start, end - start));
+                            start = end + 1;
+                          }
+                        }
+                    - if:
+                        condition:
+                          lambda: 'return !id(frame_presets).empty();'
+                        then:
+                          - lambda: |-
+                              id(frame_presets).push_back("Custom");
+                              id(frame_presets_loaded) = true;
+                              // The select keeps pointers into frame_presets, which is not changed again.
+                              FixedVector<const char *> opts;
+                              opts.init(id(frame_presets).size());
+                              for (const auto &name : id(frame_presets)) opts.push_back(name.c_str());
+                              id(frame_src).traits.set_options(opts);
+                              id(frame_src).publish_state(id(frame_presets)[0]);
   - interval: 100ms            # frames for the boot animation (first ~2.6 s after power on)
     then:
       - lambda: |-
@@ -596,29 +911,3 @@ interval:
                                mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING;
           if (playing || id(va_state) == 1 || id(va_state) == 2 || playing != id(was_speaking)) id(lcd).update();
           id(was_speaking) = playing;
-  # Touch poll: a new tap anywhere shows the next page. ESPHome's cst816 driver rejects the
-  # CST810 ("Unknown chip ID"), so read it directly (I2C 0x15, SKILL.md section 5).
-  - interval: 20ms
-    then:
-      - lambda: |-
-          static i2c::I2CDevice touch;
-          static bool init = false, down = false;
-          static uint32_t last_tap = 0;
-          if (!init) {
-            touch.set_i2c_bus(id(bus_a));
-            touch.set_i2c_address(0x15);
-            init = true;
-          }
-          uint8_t d[5] = {};
-          if (touch.read_register(0x02, d, sizeof(d)) != i2c::ERROR_OK) return;
-          const bool now = (d[0] & 0x0f) != 0;                    // finger count
-          if (now && !down && millis() - last_tap > 400) {
-            last_tap = millis();
-            ESP_LOGI("touch", "tap raw x=%d y=%d", ((d[1] & 0x0f) << 8) | d[2], ((d[3] & 0x0f) << 8) | d[4]);
-            // Taps cycle Face, Clock, Message. Video is entered only through the Video Stream
-            // switch, and a tap on it ends the stream (which returns to Face).
-            const int idx = id(page_sel).active_index().value_or(0);
-            if (idx == 3) id(video_stream).turn_off();
-            else id(page_sel).make_call().set_index((idx + 1) % 3).perform();
-          }
-          down = now;
