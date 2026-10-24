@@ -1,6 +1,6 @@
 services:
   cheeko-screenshot:
-    image: ghcr.io/shanudey/cheeko-screenshot:alpha
+    image: ghcr.io/shanudey/cheeko-screenshot:latest
     container_name: cheeko-screenshot
     init: true
     ports:

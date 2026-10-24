@@ -80,8 +80,16 @@ one after another over HTTP (a few frames per second, no audio).
    page (a built-in clock by default) in headless Chromium and serves it at
    `http://<docker-host-ip>:28240/frame.jpg`.
 2. In HA, set **Video URL** on the device to the frame address.
-3. Turn **Video Stream** on. It switches to the Video page and starts the loop.
-   Turning it off returns to the Face page.
+3. Tap the screen until the Video page shows (the tap order is Face, Clock,
+   Message, Video), or set **Display Page** to Video in HA. Fetching runs only
+   while that page is showing, so tapping on or choosing another page stops it.
+
+The page shows "Loading..." until the first frame decodes. After 3 failed
+fetches in a row (server down, wrong port, malformed or empty URL) it shows
+"No video" with "check Video URL". The device keeps retrying every second and the
+picture returns once the server answers. Tap to leave the page. A very short tap
+can be missed while a frame decodes (about 0.3 s each); tap again, or use
+**Display Page** in HA.
 
 The server must not send `Last-Modified` or allow caching (send
 `Cache-Control: no-store`). Otherwise the device sends `If-Modified-Since`,

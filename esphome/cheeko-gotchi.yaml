@@ -147,7 +147,15 @@ display:
       const int va = id(va_state);                           // 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
       // Audio can play over the video, but the voice assistant still takes the screen.
       if (page == 3 && va == 0 && !booting) {
-        it.image(0, 0, id(video_img));
+        const int vs = id(video_state);
+        if (vs == 1) {
+          it.image(0, 0, id(video_img));
+        } else if (vs == 0) {
+          it.print(120, 140, id(font_med), DIM, TextAlign::CENTER, "Loading...");
+        } else {
+          it.print(120, 130, id(font_med), FG, TextAlign::CENTER, "No video");
+          it.print(120, 170, id(font_small), DIM, TextAlign::CENTER, "check Video URL");
+        }
         return;
       }
       if (speaking || booting || va != 0) page = 0;          // face talks while audio plays
@@ -275,15 +283,18 @@ image:
     resize: 240x296
     update_interval: never
     on_download_finished:
-      - if:
-          condition:
-            lambda: 'return !cached;'     # cached: server answered 304, nothing new to draw
-          then:
-            - component.update: lcd
+      - lambda: |-
+          id(video_state) = 1;
+          id(video_errors) = 0;
+      - component.update: lcd
       - script.execute:
           id: fetch_next
-          wait_ms: !lambda 'return cached ? 250 : 50;'
+          wait_ms: !lambda 'return cached ? 250 : 50;'   # cached: server answered 304
     on_error:
+      - lambda: |-
+          // Three failures in a row, so one dropped frame does not flash "No video".
+          if (++id(video_errors) >= 3) id(video_state) = 2;
+      - component.update: lcd
       - script.execute:
           id: fetch_next
           wait_ms: 1000
@@ -300,7 +311,7 @@ script:
       - delay: !lambda 'return wait_ms;'
       - if:
           condition:
-            lambda: 'return id(video_stream).state && id(page_sel).active_index().value_or(0) == 3;'
+            lambda: 'return id(page_sel).active_index().value_or(0) == 3;'
           then:
             - component.update: video_img
 
@@ -322,15 +333,22 @@ select:
     options: [Face, Clock, Message, Video]
     initial_option: Face
     optimistic: true
-    restore_value: false       # Video needs the stream switch, so always boot on Face
+    restore_value: false       # always boot on Face
     on_value:
+      - lambda: |-
+          if (x == "Video") {
+            id(video_state) = 0;
+            id(video_errors) = 0;
+          }
       - component.update: lcd
-      # The fetch loop stops when the page leaves Video; restart it on return.
+      # Fetching runs only while this page is Video: start it on entry, it stops itself on exit.
       - if:
           condition:
-            lambda: 'return x == "Video" && id(video_stream).state;'
+            lambda: 'return x == "Video";'
           then:
-            - component.update: video_img
+            - online_image.set_url:
+                id: video_img
+                url: !lambda 'return id(video_url).state;'
   - platform: template
     name: "Clock Format"
     id: clock_fmt_sel
@@ -565,23 +583,6 @@ light:
       - component.update: lcd
 
 switch:
-  - platform: template
-    name: "Video Stream"
-    id: video_stream
-    optimistic: true
-    restore_mode: ALWAYS_OFF
-    turn_on_action:
-      - select.set:
-          id: page_sel
-          option: Video
-      - online_image.set_url:
-          id: video_img
-          url: !lambda 'return id(video_url).state;'
-    turn_off_action:
-      - select.set:
-          id: page_sel
-          option: Face
-
   - platform: gpio
     id: power_off_latch
     pin: 2
@@ -644,6 +645,12 @@ globals:
   - id: ota_pct
     type: int
     initial_value: "0"
+  - id: video_state            # 0 loading, 1 playing, 2 no video
+    type: int
+    initial_value: "0"
+  - id: video_errors           # consecutive failed fetches
+    type: int
+    initial_value: "0"
 
 interval:
   - interval: 100ms            # frames for the boot animation (first ~2.6 s after power on)
@@ -677,9 +684,7 @@ interval:
           if (now && !down && millis() - last_tap > 400) {
             last_tap = millis();
             ESP_LOGI("touch", "tap raw x=%d y=%d", ((d[1] & 0x0f) << 8) | d[2], ((d[3] & 0x0f) << 8) | d[4]);
-            // Video is entered only via the Video Stream switch; a tap on it ends the stream.
             const int idx = id(page_sel).active_index().value_or(0);
-            if (idx == 3) id(video_stream).turn_off();
-            else id(page_sel).make_call().set_index((idx + 1) % 3).perform();
+            id(page_sel).make_call().set_index((idx + 1) % 4).perform();
           }
           down = now;

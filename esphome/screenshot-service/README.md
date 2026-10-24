@@ -36,7 +36,7 @@ Actions tab. A manual run from a feature branch pushes only the `sha-` tag.
    `TARGET_URL=file:///app/pages/clock.html` in the `.env` box. Deploy.
 3. In HA, set the device's **Video URL** to
    `http://<docker-host-ip>:28240/frame.jpg` (use the IP, not a `.local` name)
-   and turn **Video Stream** on.
+   and tap to the Video page (or set **Display Page** to Video).
 
 Use `:latest` for the always-on stack and `:alpha` to try changes.
 
