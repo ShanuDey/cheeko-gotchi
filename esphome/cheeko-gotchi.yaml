@@ -1,0 +1,624 @@
+# Stage 2/3: hardware bring-up. Display, speaker, mic, buttons, backlight.
+# Pins come from SKILL.md section 2 (verified on real hardware).
+
+esphome:
+  name: cgotchi
+  friendly_name: Cheeko
+  # GPIO 2 latches power OFF if driven HIGH (SKILL.md Gotcha 8). Force it LOW
+  # as early as possible so the device never cuts its own power.
+  on_boot:
+    - priority: 800
+      then:
+        - switch.turn_off: power_off_latch
+    # The display uses update_interval: never, so draw the test screen once
+    # after everything (including the panel) has finished setting up.
+    - priority: -100
+      then:
+        - component.update: lcd
+
+esp32:
+  variant: esp32s3
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB          # matches firmware/hardware_test
+  framework:
+    type: esp-idf
+
+# Octal PSRAM is mandatory on this board (SKILL.md Gotcha 1).
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG   # board uses the S3's native USB, not a UART chip
+
+api:
+  encryption:
+    key: !secret api_key
+
+# `encryption:` with no key reuses the API key, so OTA uploads are encrypted too.
+ota:
+  - platform: esphome
+    encryption:
+    on_begin:
+      - lambda: |-
+          id(ota_state) = 1;
+          id(ota_pct) = 0;
+      - component.update: lcd
+    on_progress:
+      - lambda: |-
+          // Redraw every 5% only: the device is busy receiving the image.
+          const int p = (int) x;
+          if (p / 5 != id(ota_pct) / 5 || p >= 100) {
+            id(ota_pct) = p;
+            id(lcd).update();
+          }
+    on_error:
+      - lambda: |-
+          id(ota_state) = 2;
+      - component.update: lcd
+      - delay: 5s
+      - lambda: |-
+          id(ota_state) = 0;
+      - component.update: lcd
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # If Wi-Fi fails, the device makes its own hotspot so you can still reach it.
+  ap:
+    ssid: "Cheeko Gotchi Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+# One I2C bus shared by touch, both audio codecs and the accelerometer.
+i2c:
+  id: bus_a
+  sda: 12
+  scl: 11
+  frequency: 400kHz
+  scan: true     # prints every chip it finds in the log; expect 0x15 0x18 0x19 0x40
+
+# ---------------------------------------------------------------- display
+# 240x296 ST7789-class panel, no MISO. MADCTL 0x40 = mirror X, RGB order,
+# no inversion (SKILL.md section 4). Portrait only; landscape needs offsets.
+spi:
+  clk_pin: 9
+  mosi_pin: 10
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_clock
+    size: 72
+  - file: "gfonts://Roboto"
+    id: font_med
+    size: 28
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 20
+
+display:
+  - platform: mipi_spi
+    id: lcd
+    model: ST7789V
+    dimensions:
+      width: 240
+      height: 296
+    cs_pin: 14
+    dc_pin: 8
+    reset_pin: 17
+    data_rate: 40MHz
+    color_order: rgb
+    invert_colors: false
+    transform:                 # all three keys are required once transform is used
+      swap_xy: false
+      mirror_x: false
+      mirror_y: false
+    update_interval: never     # redraws come from entity changes, the minute tick and the talking-mouth interval
+    lambda: |-
+      const Color BG(0, 0, 0), FG(255, 255, 255), ACCENT(0, 200, 255), DIM(130, 130, 130);
+      it.fill(BG);
+
+      // Firmware update: progress bar replaces everything else.
+      if (id(ota_state) != 0) {
+        if (id(ota_state) == 2) {
+          it.print(120, 120, id(font_med), Color(255, 80, 80), TextAlign::TOP_CENTER, "Update failed");
+          return;
+        }
+        const int pct = id(ota_pct);
+        it.print(120, 80, id(font_med), ACCENT, TextAlign::TOP_CENTER, "Updating");
+        it.rectangle(20, 140, 200, 18, DIM);
+        it.filled_rectangle(22, 142, (196 * pct) / 100, 14, ACCENT);
+        it.printf(120, 175, id(font_med), FG, TextAlign::TOP_CENTER, "%d%%", pct);
+        it.print(120, 250, id(font_small), DIM, TextAlign::TOP_CENTER, "Don't unplug");
+        return;
+      }
+
+      const uint32_t up = millis();
+      const bool booting = up < 2600;                        // wake-up animation after power on
+      // Voice replies play as announcements (ANNOUNCING), media from HA as PLAYING.
+      const auto mp = id(gotchi_player).state;
+      const bool speaking = !booting && (mp == media_player::MEDIA_PLAYER_STATE_PLAYING ||
+                                         mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+      int page = id(page_sel).active_index().value_or(0);   // 0 Face, 1 Clock, 2 Message, 3 Video
+      const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);  // 0 happy 1 sad 2 sleepy 3 surprised
+      const int va = id(va_state);                           // 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
+      // Video: latest JPEG frame, full screen. Audio can play over it, but the voice
+      // assistant still takes the screen (falls through to the face below).
+      if (page == 3 && va == 0 && !booting) {
+        it.image(0, 0, id(video_img));
+        return;
+      }
+      if (speaking || booting || va != 0) page = 0;          // face talks while audio plays
+
+      if (page == 0) {
+        const int cx = 120, ey = 110;
+        // Curved mouth: dir +1 smile, -1 frown.
+        auto curve = [&](int cy, int w, int h, int dir) {
+          int px = cx - w, py = cy;
+          for (int i = 1; i <= 24; i++) {
+            float t = i / 24.0f;
+            int x = cx - w + (int) (2 * w * t);
+            int y = cy + dir * (int) (h * sinf(t * M_PI));
+            for (int k = 0; k < 4; k++) it.line(px, py + k, x, y + k, ACCENT);
+            px = x; py = y;
+          }
+        };
+        // Eyes
+        if (va == 1) {                                       // listening: wide eyes, pulsing rings
+          const int pulse = (millis() / 250) % 3 * 3;
+          it.circle(cx - 45, ey, 26 + pulse, ACCENT);
+          it.circle(cx + 45, ey, 26 + pulse, ACCENT);
+          it.filled_circle(cx - 45, ey, 14, ACCENT);
+          it.filled_circle(cx + 45, ey, 14, ACCENT);
+        } else if (va == 2) {                                // thinking: eyes glance up and aside
+          it.filled_circle(cx - 40, ey - 12, 13, ACCENT);
+          it.filled_circle(cx + 50, ey - 12, 13, ACCENT);
+        } else if (expr == 2) {                              // sleepy: closed lines
+          it.filled_rectangle(cx - 62, ey - 3, 34, 6, ACCENT);
+          it.filled_rectangle(cx + 28, ey - 3, 34, 6, ACCENT);
+        } else if (expr == 3) {                              // surprised: big rings
+          it.circle(cx - 45, ey, 26, ACCENT);
+          it.circle(cx + 45, ey, 26, ACCENT);
+          it.filled_circle(cx - 45, ey, 9, ACCENT);
+          it.filled_circle(cx + 45, ey, 9, ACCENT);
+        } else {
+          const int er = (booting && up < 1200) ? 2 + (int) (14 * up / 1200) : 16;   // eyes open on boot
+          it.filled_circle(cx - 45, ey, er, ACCENT);
+          it.filled_circle(cx + 45, ey, er, ACCENT);
+        }
+        // Mouth
+        if (booting && up < 1200) {
+          // eyes still opening, no mouth yet
+        } else if (speaking) {
+          it.filled_circle(cx, 200, 10 + ((millis() / 180) % 3) * 8, ACCENT);
+        } else if (va == 1) {                                // listening: small open mouth
+          it.filled_circle(cx, 205, 9, ACCENT);
+        } else if (va == 2) {                                // thinking: three dots, one lit at a time
+          const int lit = (millis() / 350) % 3;
+          for (int d = 0; d < 3; d++) it.filled_circle(cx - 28 + d * 28, 205, d == lit ? 9 : 5, ACCENT);
+        } else if (expr == 0) {
+          curve(185, 55, 30, 1);
+        } else if (expr == 1) {
+          curve(215, 55, 30, -1);
+        } else if (expr == 2) {
+          it.circle(cx, 205, 9, ACCENT);
+        } else {
+          it.filled_circle(cx, 205, 20, ACCENT);
+        }
+        if (speaking) it.print(cx, 262, id(font_small), DIM, TextAlign::TOP_CENTER, "speaking...");
+        else if (va == 1) it.print(cx, 262, id(font_small), ACCENT, TextAlign::TOP_CENTER, "listening...");
+        else if (va == 2) it.print(cx, 262, id(font_small), DIM, TextAlign::TOP_CENTER, "thinking...");
+        else if (va == 4) it.print(cx, 262, id(font_small), Color(255, 80, 80), TextAlign::TOP_CENTER, "voice error");
+        if (booting && up >= 1200) it.print(cx, 255, id(font_med), ACCENT, TextAlign::TOP_CENTER, "Hello!");
+      } else if (page == 1) {
+        auto now = id(ha_time).now();
+        if (now.is_valid()) {
+          char hm[8];
+          if (id(clock_fmt_sel).active_index().value_or(0) == 1) {     // 24 hour
+            snprintf(hm, sizeof(hm), "%02d:%02d", now.hour, now.minute);
+          } else {                                                     // 12 hour, no AM/PM
+            int hour12 = now.hour % 12;
+            if (hour12 == 0) hour12 = 12;
+            snprintf(hm, sizeof(hm), "%d:%02d", hour12, now.minute);
+          }
+          it.print(120, 90, id(font_clock), ACCENT, TextAlign::TOP_CENTER, hm);
+          it.strftime(120, 180, id(font_med), FG, TextAlign::TOP_CENTER, "%a %d %b", now);
+        } else {
+          it.print(120, 130, id(font_med), DIM, TextAlign::TOP_CENTER, "waiting for time");
+        }
+      } else {
+        it.print(120, 24, id(font_med), ACCENT, TextAlign::TOP_CENTER, id(msg_title).state.c_str());
+        it.filled_rectangle(20, 64, 200, 2, DIM);
+        // Word-wrap the body at 18 characters per line.
+        const std::string body = id(msg_body).state;
+        std::string word, line;
+        int y = 80;
+        auto emit = [&](const std::string &s) {
+          it.print(18, y, id(font_small), FG, TextAlign::TOP_LEFT, s.c_str());
+          y += 26;
+        };
+        for (size_t i = 0; i <= body.size(); i++) {
+          char c = i < body.size() ? body[i] : ' ';
+          if (c != ' ') { word += c; continue; }
+          if (word.empty()) continue;
+          // A word longer than one line (e.g. a URL) is split instead of running off-screen.
+          while (word.size() > 18) {
+            if (!line.empty()) { emit(line); line.clear(); }
+            emit(word.substr(0, 18));
+            word.erase(0, 18);
+          }
+          if (!line.empty() && line.size() + 1 + word.size() > 18) { emit(line); line = word; }
+          else { line += (line.empty() ? "" : " "); line += word; }
+          word.clear();
+        }
+        if (!line.empty()) emit(line);
+      }
+
+# ------------------------------------------------------------------ video
+# Poor man's video: fetch one JPEG snapshot after another over HTTP and draw it.
+# The next fetch starts as soon as the previous frame is decoded, so the frame
+# rate is whatever the network, server and decoder allow (expect a few fps).
+# Serve frames already scaled to 240x296: the device only decodes, it does not
+# shrink. See screenshot-service/ for a ready-made frame server.
+http_request:
+  timeout: 5s
+  buffer_size_rx: 4096
+
+image:
+  - platform: online_image
+    id: video_img
+    url: "http://homeassistant.local:8080/frame.jpg"   # placeholder; Video URL in HA replaces it
+    format: JPEG
+    type: RGB565
+    resize: 240x296
+    update_interval: never     # frames are chained from on_download_finished
+    on_download_finished:
+      - if:
+          condition:
+            lambda: 'return !cached;'    # cached: server answered 304, nothing new to draw
+          then:
+            - component.update: lcd
+          else:
+            - delay: 200ms          # unchanged frame: do not spin on repeated 304s
+      # Never start the next download from inside this callback: the component
+      # tears down its connection right after it returns, which would abort the
+      # new download and release the image (black screen). The delay defers it.
+      - delay: 50ms
+      # Keep fetching only while the stream is on AND the Video page is showing (page 3),
+      # so switching pages from HA stops the background fetching.
+      - if:
+          condition:
+            lambda: 'return id(video_stream).state && id(page_sel).active_index().value_or(0) == 3;'
+          then:
+            - component.update: video_img
+    on_error:
+      - if:
+          condition:
+            lambda: 'return id(video_stream).state && id(page_sel).active_index().value_or(0) == 3;'
+          then:
+            - delay: 1s        # back off so a dead server does not spin the CPU
+            - if:
+                condition:
+                  lambda: 'return id(video_stream).state && id(page_sel).active_index().value_or(0) == 3;'
+                then:
+                  - component.update: video_img
+
+# ---------------------------------------------- display controls (from HA)
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time_sync:
+      - component.update: lcd
+    on_time:
+      - seconds: 0               # clock page only changes once a minute
+        then:
+          - component.update: lcd
+
+select:
+  - platform: template
+    name: "Display Page"
+    id: page_sel
+    options: [Face, Clock, Message, Video]
+    initial_option: Face
+    optimistic: true
+    restore_value: false       # Video needs the stream switch; always boot on Face
+    on_value:
+      - component.update: lcd
+      # Back on the Video page with the stream still on: the fetch loop had stopped.
+      - if:
+          condition:
+            lambda: 'return x == "Video" && id(video_stream).state;'
+          then:
+            - component.update: video_img
+  - platform: template
+    name: "Clock Format"
+    id: clock_fmt_sel
+    options: ["12 hour", "24 hour"]
+    initial_option: "12 hour"
+    optimistic: true
+    restore_value: true        # kept in flash (NVS), survives reboots and OTA
+    on_value:
+      - component.update: lcd
+  - platform: template
+    name: "Face Expression"
+    id: face_sel
+    options: [Happy, Sad, Sleepy, Surprised]
+    initial_option: Happy
+    optimistic: true
+    restore_value: true
+    on_value:
+      - component.update: lcd
+
+text:
+  - platform: template
+    name: "Video URL"
+    id: video_url
+    mode: text
+    max_length: 255
+    optimistic: true
+    restore_value: true
+    initial_value: "http://homeassistant.local:8080/frame.jpg"
+  - platform: template
+    name: "Message Title"
+    id: msg_title
+    mode: text
+    max_length: 16
+    optimistic: true
+    restore_value: true
+    initial_value: "Hello"
+    on_value:
+      - component.update: lcd
+  - platform: template
+    name: "Message Body"
+    id: msg_body
+    mode: text
+    max_length: 120
+    optimistic: true
+    restore_value: true
+    initial_value: "Set me from Home Assistant"
+    on_value:
+      - component.update: lcd
+
+# ------------------------------------------------------------------ audio
+# One I2S bus shared by playback (ES8311) and capture (ES7210).
+# The ES8311 cannot record; all capture goes through the ES7210 (SKILL.md).
+i2s_audio:
+  - id: i2s_bus
+    i2s_lrclk_pin: 16
+    i2s_bclk_pin: 15
+    i2s_mclk_pin: 5
+
+audio_dac:
+  - platform: es8311
+    id: es8311_dac
+    address: 0x18
+    bits_per_sample: 16bit
+    sample_rate: 16000
+
+audio_adc:
+  - platform: es7210
+    id: es7210_adc
+    address: 0x40
+    bits_per_sample: 16bit
+    sample_rate: 16000
+    mic_gain: 24dB
+
+speaker:
+  - platform: i2s_audio
+    id: spk
+    i2s_audio_id: i2s_bus
+    i2s_dout_pin: 6
+    dac_type: external
+    audio_dac: es8311_dac
+    channel: left
+    sample_rate: 16000
+    bits_per_sample: 16bit
+
+microphone:
+  - platform: i2s_audio
+    id: mic
+    i2s_audio_id: i2s_bus
+    i2s_din_pin: 7
+    adc_type: external
+    sample_rate: 16000
+    bits_per_sample: 16bit
+
+sensor:
+  # Loudness in dB so you can watch the mic react in HA.
+  # Passive: only measures while something else (e.g. the voice assistant) is
+  # capturing. A non-passive meter holds the I2S bus open and blocks the speaker.
+  - platform: sound_level
+    id: noise_meter
+    microphone: mic
+    passive: true
+    rms:
+      name: "Mic Level"
+
+# -------------------------------------------------------- switches / inputs
+# Lets HA play audio / TTS on the device: Media browser, tts.speak, announcements.
+media_player:
+  - platform: speaker
+    name: "Speaker"
+    id: gotchi_player
+    volume_increment: 0.1      # step per volume-button press
+    volume_min: 0.1            # never fully mute by button
+    volume_max: 1.0
+    announcement_pipeline:
+      speaker: spk
+      format: FLAC
+      sample_rate: 16000
+      num_channels: 1
+
+# Voice assistant: hold Volume Up to talk. HA's Assist pipeline (speech to text,
+# conversation agent, text to speech) is chosen in the device's settings in HA.
+# Replies play through the Speaker media player above.
+voice_assistant:
+  id: va
+  microphone: mic
+  media_player: gotchi_player
+  use_wake_word: false
+  noise_suppression_level: 2
+  auto_gain: 31dBFS
+  volume_multiplier: 2.0
+  on_listening:
+    - lambda: |-
+        id(va_state) = 1;
+    - component.update: lcd
+  on_stt_vad_end:
+    - lambda: |-
+        id(va_state) = 2;
+    - component.update: lcd
+  on_tts_end:
+    - lambda: |-
+        id(va_state) = 3;
+    - component.update: lcd
+  on_error:
+    - lambda: |-
+        id(va_state) = 4;
+    - component.update: lcd
+    - delay: 3s
+    - lambda: |-
+        id(va_state) = 0;
+    - component.update: lcd
+  on_end:
+    - delay: 100ms
+    - lambda: |-
+        if (id(va_state) != 4) id(va_state) = 0;
+    - component.update: lcd
+
+output:
+  - platform: ledc
+    id: backlight_pwm
+    pin: 13                    # LCD backlight enable, HIGH = on
+    frequency: 1000Hz
+
+light:
+  - platform: monochromatic
+    name: "Backlight"
+    id: backlight
+    output: backlight_pwm
+    restore_mode: RESTORE_DEFAULT_ON
+    default_transition_length: 0s   # no fade, snappy dimming
+
+switch:
+  # Start/stop the snapshot video on the Video page. Set "Video URL" first.
+  - platform: template
+    name: "Video Stream"
+    id: video_stream
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - select.set:
+          id: page_sel
+          option: Video
+      - online_image.set_url:
+          id: video_img
+          url: !lambda 'return id(video_url).state;'
+    turn_off_action:
+      - select.set:
+          id: page_sel
+          option: Face
+
+  - platform: gpio
+    id: power_off_latch
+    pin: 2
+    restore_mode: ALWAYS_OFF
+    internal: true             # hidden from HA on purpose: turning it on kills power
+
+  - platform: gpio
+    id: speaker_amp
+    pin: 4                     # NS4150B amp enable, HIGH = on
+    restore_mode: ALWAYS_ON
+    internal: true
+
+binary_sensor:
+  - platform: gpio
+    name: "Volume Up"
+    pin:
+      number: 40
+      mode: INPUT_PULLUP
+      inverted: true           # active LOW
+    filters:
+      - delayed_on_off: 20ms   # debounce
+    on_click:
+      - min_length: 20ms         # short press: volume up
+        max_length: 600ms
+        then:
+          - media_player.volume_up: gotchi_player
+      - min_length: 700ms        # long press: push-to-talk, press again to cancel
+        max_length: 10s
+        then:
+          - if:
+              condition: voice_assistant.is_running
+              then:
+                - voice_assistant.stop:
+              else:
+                - voice_assistant.start:
+
+  - platform: gpio
+    name: "Volume Down"
+    pin:
+      number: 39
+      mode: INPUT_PULLUP
+      inverted: true
+    filters:
+      - delayed_on_off: 20ms
+    on_press:
+      - media_player.volume_down: gotchi_player
+
+# No middle-button sensor: it feeds the power circuit and never reaches GPIO 3 on this unit (hardware_test's PWR indicator stays dark too).
+
+globals:
+  - id: was_speaking
+    type: bool
+    initial_value: "false"
+  - id: va_state               # voice assistant: 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
+    type: int
+    initial_value: "0"
+  - id: ota_state              # 0 idle, 1 updating, 2 failed
+    type: int
+    initial_value: "0"
+  - id: ota_pct
+    type: int
+    initial_value: "0"
+
+interval:
+  - interval: 100ms            # frames for the boot animation (first ~2.6 s after power on)
+    then:
+      - lambda: |-
+          if (millis() < 2800) id(lcd).update();
+  - interval: 200ms           # animate the talking mouth while audio plays, plus one redraw when it stops
+    then:
+      - lambda: |-
+          const auto mp = id(gotchi_player).state;
+          const bool playing = mp == media_player::MEDIA_PLAYER_STATE_PLAYING ||
+                               mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING;
+          if (playing || id(va_state) == 1 || id(va_state) == 2 || playing != id(was_speaking)) id(lcd).update();
+          id(was_speaking) = playing;
+  # Touch poll: a new tap anywhere shows the next page. ESPHome's cst816 driver rejects the
+  # CST810 ("Unknown chip ID"), so read it directly (I2C 0x15, SKILL.md section 5).
+  - interval: 20ms
+    then:
+      - lambda: |-
+          static i2c::I2CDevice touch;
+          static bool init = false, down = false;
+          static uint32_t last_tap = 0;
+          if (!init) {
+            touch.set_i2c_bus(id(bus_a));
+            touch.set_i2c_address(0x15);
+            init = true;
+          }
+          uint8_t d[5] = {};
+          if (touch.read_register(0x02, d, sizeof(d)) != i2c::ERROR_OK) return;
+          const bool now = (d[0] & 0x0f) != 0;                    // finger count
+          if (now && !down && millis() - last_tap > 400) {
+            last_tap = millis();
+            ESP_LOGI("touch", "tap raw x=%d y=%d", ((d[1] & 0x0f) << 8) | d[2], ((d[3] & 0x0f) << 8) | d[4]);
+            // Taps cycle Face, Clock, Message. Video is entered only through the Video Stream
+            // switch, and a tap on it ends the stream (which returns to Face).
+            const int idx = id(page_sel).active_index().value_or(0);
+            if (idx == 3) id(video_stream).turn_off();
+            else id(page_sel).make_call().set_index((idx + 1) % 3).perform();
+          }
+          down = now;
