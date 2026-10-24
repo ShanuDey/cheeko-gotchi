@@ -12,7 +12,7 @@ Device name: `cgotchi`. Config: [cheeko-gotchi.yaml](cheeko-gotchi.yaml).
 |---|---|
 | Wi-Fi, HA API, wireless OTA | works |
 | Backlight (dimmable light) | works |
-| Volume up/down buttons | works: each short press steps the speaker volume by 10% (min 10%) |
+| Volume up/down buttons | works: each short press steps the speaker volume by 5%; 0 to 100% is rescaled onto the audible, undistorted DAC range (0.3 to 0.8) |
 | Voice assistant | added: hold Volume Up (about 1 s) to talk, push-to-talk only. Listening, thinking and speaking each have their own face. See Voice assistant below. |
 | Boot animation | works: eyes open and "Hello!" for the first ~2.6 s after power on |
 | On-screen OTA progress | works: "Updating" with a percentage, or "Update failed" |

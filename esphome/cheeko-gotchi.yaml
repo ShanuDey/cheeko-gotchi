@@ -645,9 +645,11 @@ media_player:
   - platform: speaker
     name: "Speaker"
     id: gotchi_player
-    volume_increment: 0.1      # step per volume-button press
-    volume_min: 0.1            # never fully mute by button
-    volume_max: 1.0
+    volume_increment: 0.05     # step per volume-button press (20 even steps, about 3 dB each)
+    # The ES8311 register is linear in dB (0.75 = 0 dB): below 0.3 is inaudible, above 0.8 clips.
+    # The player rescales its 0-100% into this window, so every step is audible and clean.
+    volume_min: 0.3
+    volume_max: 0.8
     announcement_pipeline:
       speaker: spk
       format: FLAC
