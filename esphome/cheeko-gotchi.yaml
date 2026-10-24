@@ -1,6 +1,3 @@
-# Stage 2/3: hardware bring-up. Display, speaker, mic, buttons, backlight.
-# Pins come from SKILL.md section 2 (verified on real hardware).
-
 esphome:
   name: cgotchi
   friendly_name: Cheeko
@@ -24,6 +21,26 @@ esp32:
   flash_size: 16MB          # matches firmware/hardware_test
   framework:
     type: esp-idf
+    # Needed by the remote_webview component (WebSocket client + JPEG tile decoder).
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
+      CONFIG_SPIRAM_RODATA: y
+    components:
+      - name: "espressif/esp_websocket_client"
+        ref: 1.5.0
+      - name: "bitbank2/jpegdec"
+        source: https://github.com/strange-v/jpegdec-esphome
+
+# Patched copy of github.com/strange-v/RemoteWebViewClient: adds active/set_active() so the
+# web page and the lambda-drawn pages can share the panel, and flip_x. See remote_webview/README.md.
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [remote_webview]
 
 # Octal PSRAM is mandatory on this board (SKILL.md Gotcha 1).
 psram:
@@ -81,6 +98,34 @@ i2c:
   frequency: 400kHz
   scan: true     # prints every chip it finds in the log; expect 0x15 0x18 0x19 0x40
 
+# CST810 touch. ESPHome's cst816 driver rejects its chip ID, so skip the probe; the register
+# layout (touch count at 0x02, X at 0x03/04, Y at 0x05/06) matches. Raw axes are swapped vs the
+# display (SKILL.md section 5: raw Y -> screen X, raw X -> screen Y inverted). The calibration is
+# a first guess from that section's measurements; tune it with the touch log (VERBOSE) if taps
+# on the WebView page land off target.
+touchscreen:
+  - platform: cst816
+    id: touch
+    i2c_id: bus_a
+    skip_probe: true
+    update_interval: 20ms
+    calibration:
+      x_min: 0
+      x_max: 300
+      y_min: 0
+      y_max: 260
+    transform:
+      swap_xy: false
+      mirror_x: false
+      mirror_y: false
+    on_touch:
+      - logger.log:
+          level: VERBOSE
+          format: "touch x=%d y=%d raw x=%d y=%d"
+          args: ["touch.x", "touch.y", "touch.x_raw", "touch.y_raw"]
+    # Taps belong to the WebView page (forwarded by remote_webview). Pages change with a long
+    # press of Volume Down or the Display Page select in HA.
+
 # ---------------------------------------------------------------- display
 # 240x296 ST7789-class panel, no MISO. MADCTL 0x40 = mirror X, RGB order,
 # no inversion (SKILL.md section 4). Portrait only; landscape needs offsets.
@@ -110,15 +155,34 @@ display:
     dc_pin: 8
     reset_pin: 17
     data_rate: 40MHz
-    color_order: rgb
+    color_order: bgr           # rgb shows red and blue swapped on this unit (blue preset came out yellow)
     invert_colors: false
     transform:                 # all three keys are required once transform is used
       swap_xy: false
-      mirror_x: false
+      mirror_x: true           # MADCTL 0x40 (SKILL.md section 4); false shows every page flipped left to right
       mirror_y: false
     update_interval: never     # redraws come from entity changes, the minute tick and the talking-mouth interval
+    auto_clear_enabled: false  # the lambda fills the screen itself; the WebView page must not be cleared
     lambda: |-
       const Color BG(0, 0, 0), FG(255, 255, 255), ACCENT(0, 200, 255), DIM(130, 130, 130);
+
+      const uint32_t up = millis();
+      const bool booting = up < 2600;                        // wake-up animation after power on
+      // Voice replies play as announcements (ANNOUNCING), media from HA as PLAYING.
+      const auto mp = id(gotchi_player).state;
+      const bool speaking = !booting && (mp == media_player::MEDIA_PLAYER_STATE_PLAYING ||
+                                         mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+      int page = id(page_sel).active_index().value_or(0);   // 0 Face, 1 Clock, 2 Message, 3 Video, 4 WebView
+      const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);  // 0 happy 1 sad 2 sleepy 3 surprised
+      const int va = id(va_state);                           // 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
+
+      // The WebView page is drawn by the remote_webview component straight to the panel, so
+      // this lambda must draw nothing while it shows. The voice assistant, audio and firmware
+      // updates take the screen back: set_active(false) waits for a tile already being drawn.
+      const bool webview = page == 4 && va == 0 && !booting && !speaking && id(ota_state) == 0;
+      id(rwv).set_active(webview);
+      if (webview) return;
+
       it.fill(BG);
 
       // Firmware update: progress bar replaces everything else.
@@ -136,15 +200,6 @@ display:
         return;
       }
 
-      const uint32_t up = millis();
-      const bool booting = up < 2600;                        // wake-up animation after power on
-      // Voice replies play as announcements (ANNOUNCING), media from HA as PLAYING.
-      const auto mp = id(gotchi_player).state;
-      const bool speaking = !booting && (mp == media_player::MEDIA_PLAYER_STATE_PLAYING ||
-                                         mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
-      int page = id(page_sel).active_index().value_or(0);   // 0 Face, 1 Clock, 2 Message, 3 Video
-      const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);  // 0 happy 1 sad 2 sleepy 3 surprised
-      const int va = id(va_state);                           // 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
       // Audio can play over the video, but the voice assistant still takes the screen.
       if (page == 3 && va == 0 && !booting) {
         const int vs = id(video_state);
@@ -277,7 +332,7 @@ http_request:
 image:
   - platform: online_image
     id: video_img
-    url: "http://homeassistant.local:28240/frame.jpg"   # replaced by the Video URL entity
+    url: "http://homeassistant.local:8123/lovelace/default_view"
     format: JPEG
     type: RGB565
     resize: 240x296
@@ -315,6 +370,26 @@ script:
           then:
             - component.update: video_img
 
+# ---------------------------------------------------------------- webview
+# An HA dashboard rendered by the Remote WebView server (esphome/remote-webview/) and streamed
+# as JPEG tiles. Taps go to the page. Starts paused: the lambda above turns it on while the
+# WebView page shows. Long press Volume Down to change page.
+remote_webview:
+  id: rwv
+  display_id: lcd
+  server: !secret webview_server
+  url: !secret webview_url
+  active: false
+  flip_x: false              # the panel's own mirror_x covers it; see components/remote_webview/README.md
+  tile_size: 16
+  full_frame_tile_count: 1
+  max_bytes_per_msg: 61440
+  jpeg_quality: 85
+  big_endian: true
+  stats_interval: 10s
+  current_url_sensor:
+    name: "WebView Current URL"
+
 # ---------------------------------------------- display controls (from HA)
 time:
   - platform: homeassistant
@@ -330,7 +405,7 @@ select:
   - platform: template
     name: "Display Page"
     id: page_sel
-    options: [Face, Clock, Message, Video]
+    options: [Face, Clock, Message, Video, WebView]
     initial_option: Face
     optimistic: true
     restore_value: false       # always boot on Face
@@ -387,6 +462,22 @@ select:
       - component.update: lcd
 
 text:
+  # Change the dashboard from HA without reflashing (not kept across reboots; the
+  # webview_url substitution is the default).
+  - platform: template
+    name: "WebView URL"
+    id: webview_url_text
+    mode: text
+    max_length: 255
+    optimistic: true
+    restore_value: false
+    initial_value: !secret webview_url
+    set_action:
+      - lambda: |-
+          if (!id(rwv).open_url(x)) {
+            id(rwv).set_url(x);
+            ESP_LOGI("webview", "not connected yet, URL queued");
+          }
   - platform: template
     name: "Video URL"
     id: video_url
@@ -394,7 +485,7 @@ text:
     max_length: 255
     optimistic: true
     restore_value: true
-    initial_value: "http://homeassistant.local:28240/frame.jpg"
+    initial_value: "http://homeassistant.local:8123/lovelace/default_view"
   - platform: template
     name: "Message Title"
     id: msg_title
@@ -583,6 +674,24 @@ light:
       - component.update: lcd
 
 switch:
+  # Mirrors the WebView page left to right in software. Normally off (the display's mirror_x
+  # already orients every page); a debugging aid if only the web page ever looks flipped.
+  # Not remembered: it is off after every reboot.
+  - platform: template
+    name: "WebView Flip X"
+    id: webview_flip
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    entity_category: config
+    turn_on_action:
+      - lambda: |-
+          id(rwv).set_flip_x(true);
+          id(rwv).refresh();
+    turn_off_action:
+      - lambda: |-
+          id(rwv).set_flip_x(false);
+          id(rwv).refresh();
+
   - platform: gpio
     id: power_off_latch
     pin: 2
@@ -627,8 +736,17 @@ binary_sensor:
       inverted: true
     filters:
       - delayed_on_off: 20ms
-    on_press:
-      - media_player.volume_down: gotchi_player
+    on_click:
+      - min_length: 20ms         # short press: volume down
+        max_length: 600ms
+        then:
+          - media_player.volume_down: gotchi_player
+      - min_length: 700ms        # long press: next page (Face, Clock, Message, Video, WebView)
+        max_length: 10s
+        then:
+          - select.next:
+              id: page_sel
+              cycle: true
 
 # No middle-button sensor: it feeds the power circuit and never reaches GPIO 3 on this unit (hardware_test's PWR indicator stays dark too).
 
@@ -665,26 +783,3 @@ interval:
                                mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING;
           if (playing || id(va_state) == 1 || id(va_state) == 2 || playing != id(was_speaking)) id(lcd).update();
           id(was_speaking) = playing;
-  # Touch poll: a new tap anywhere shows the next page. ESPHome's cst816 driver rejects the
-  # CST810 ("Unknown chip ID"), so read it directly (I2C 0x15, SKILL.md section 5).
-  - interval: 20ms
-    then:
-      - lambda: |-
-          static i2c::I2CDevice touch;
-          static bool init = false, down = false;
-          static uint32_t last_tap = 0;
-          if (!init) {
-            touch.set_i2c_bus(id(bus_a));
-            touch.set_i2c_address(0x15);
-            init = true;
-          }
-          uint8_t d[5] = {};
-          if (touch.read_register(0x02, d, sizeof(d)) != i2c::ERROR_OK) return;
-          const bool now = (d[0] & 0x0f) != 0;                    // finger count
-          if (now && !down && millis() - last_tap > 400) {
-            last_tap = millis();
-            ESP_LOGI("touch", "tap raw x=%d y=%d", ((d[1] & 0x0f) << 8) | d[2], ((d[3] & 0x0f) << 8) | d[4]);
-            const int idx = id(page_sel).active_index().value_or(0);
-            id(page_sel).make_call().set_index((idx + 1) % 4).perform();
-          }
-          down = now;
