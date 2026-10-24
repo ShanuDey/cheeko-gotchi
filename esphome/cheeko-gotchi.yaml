@@ -166,6 +166,18 @@ display:
     lambda: |-
       const Color BG(0, 0, 0), FG(255, 255, 255), ACCENT(0, 200, 255), DIM(130, 130, 130);
 
+      // Volume popup: a bar and percentage for 1.5 s after a volume button press (show_volume
+      // script). Kept inside the bottom safe margin because the screen corners are cropped.
+      const bool vol_vis = (int32_t) (id(vol_until) - millis()) > 0;
+      auto draw_volume = [&]() {
+        const int pct = (int) roundf(id(gotchi_player).volume * 100.0f);
+        it.filled_rectangle(12, 244, 216, 38, BG);
+        it.rectangle(12, 244, 216, 38, DIM);
+        it.rectangle(24, 255, 130, 16, FG);
+        it.filled_rectangle(26, 257, (126 * pct) / 100, 12, ACCENT);
+        it.printf(192, 263, id(font_small), FG, TextAlign::CENTER, "%d%%", pct);
+      };
+
       const uint32_t up = millis();
       const bool booting = up < 2600;                        // wake-up animation after power on
       // Voice replies play as announcements (ANNOUNCING), media from HA as PLAYING.
@@ -180,8 +192,13 @@ display:
       // this lambda must draw nothing while it shows. The voice assistant, audio and firmware
       // updates take the screen back: set_active(false) waits for a tile already being drawn.
       const bool webview = page == 4 && va == 0 && !booting && !speaking && id(ota_state) == 0;
-      id(rwv).set_active(webview);
-      if (webview) return;
+      id(rwv).set_active(webview && !vol_vis);
+      if (webview) {
+        // While the volume popup shows, the tiles are paused and only the popup is drawn over
+        // the page; set_active(true) then requests a full frame, which repaints the page.
+        if (vol_vis) draw_volume();
+        return;
+      }
 
       it.fill(BG);
 
@@ -211,6 +228,7 @@ display:
           it.print(120, 130, id(font_med), FG, TextAlign::CENTER, "No video");
           it.print(120, 170, id(font_small), DIM, TextAlign::CENTER, "check Video URL");
         }
+        if (vol_vis) draw_volume();
         return;
       }
       if (speaking || booting || va != 0) page = 0;          // face talks while audio plays
@@ -321,6 +339,7 @@ display:
         }
         if (!line.empty()) emit(line);
       }
+      if (vol_vis) draw_volume();
 
 # ------------------------------------------------------------------ video
 # JPEG snapshots fetched one after another and drawn full screen (a few fps, no
@@ -355,6 +374,17 @@ image:
           wait_ms: 1000
 
 script:
+  # Volume popup: the display lambda draws the bar while vol_until is in the future, then this
+  # redraws once more so the popup disappears.
+  - id: show_volume
+    mode: restart
+    then:
+      - delay: 60ms              # let the media player apply the new volume first
+      - lambda: |-
+          id(vol_until) = millis() + 1500;
+      - component.update: lcd
+      - delay: 1560ms
+      - component.update: lcd
   # The next download must not start inside the callbacks above: the component tears
   # down its connection right after they return, which aborts the new download and
   # releases the image (black screen). Running from a script defers it.
@@ -718,6 +748,7 @@ binary_sensor:
         max_length: 600ms
         then:
           - media_player.volume_up: gotchi_player
+          - script.execute: show_volume
       - min_length: 700ms        # long press: push-to-talk, press again to cancel
         max_length: 10s
         then:
@@ -741,6 +772,7 @@ binary_sensor:
         max_length: 600ms
         then:
           - media_player.volume_down: gotchi_player
+          - script.execute: show_volume
       - min_length: 700ms        # long press: next page (Face, Clock, Message, Video, WebView)
         max_length: 10s
         then:
@@ -768,6 +800,9 @@ globals:
     initial_value: "0"
   - id: video_errors           # consecutive failed fetches
     type: int
+    initial_value: "0"
+  - id: vol_until              # millis() until which the volume popup shows
+    type: uint32_t
     initial_value: "0"
 
 interval:
