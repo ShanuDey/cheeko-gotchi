@@ -140,7 +140,11 @@ display:
       const auto mp = id(gotchi_player).state;
       const bool speaking = !booting && (mp == media_player::MEDIA_PLAYER_STATE_PLAYING ||
                                          mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
-      int page = id(page_sel).active_index().value_or(0);   // 0 Face, 1 Clock, 2 Message
+      int page = id(page_sel).active_index().value_or(0);   // 0 Face, 1 Clock, 2 Message, 3 Video
+      if (page == 3) {                                       // video: latest JPEG frame, full screen
+        it.image(0, 0, id(video_img));
+        return;
+      }
       const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);  // 0 happy 1 sad 2 sleepy 3 surprised
       const int va = id(va_state);                           // 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
       if (speaking || booting || va != 0) page = 0;          // face talks while audio plays
@@ -249,6 +253,49 @@ display:
         if (!line.empty()) emit(line);
       }
 
+# ------------------------------------------------------------------ video
+# Poor man's video: fetch one JPEG snapshot after another over HTTP and draw it.
+# The next fetch starts as soon as the previous frame is decoded, so the frame
+# rate is whatever the network, server and decoder allow (expect a few fps).
+# Serve frames already scaled to 240x296: the device only decodes, it does not
+# shrink. go2rtc example: http://<host>:1984/api/frame.jpeg?src=<stream>&width=240&height=296
+http_request:
+  timeout: 5s
+  buffer_size_rx: 4096
+
+image:
+  - platform: online_image
+    id: video_img
+    url: "http://homeassistant.local:1984/api/frame.jpeg?src=cam&width=240&height=296"
+    format: JPEG
+    type: RGB565
+    resize: 240x296
+    update_interval: never     # frames are chained from on_download_finished
+    on_download_finished:
+      - if:
+          condition:
+            lambda: 'return !cached;'    # cached: server answered 304, nothing new to draw
+          then:
+            - component.update: lcd
+          else:
+            - delay: 200ms          # unchanged frame: do not spin on repeated 304s
+      - if:
+          condition:
+            switch.is_on: video_stream
+          then:
+            - component.update: video_img
+    on_error:
+      - if:
+          condition:
+            switch.is_on: video_stream
+          then:
+            - delay: 1s        # back off so a dead server does not spin the CPU
+            - if:
+                condition:
+                  switch.is_on: video_stream
+                then:
+                  - component.update: video_img
+
 # ---------------------------------------------- display controls (from HA)
 time:
   - platform: homeassistant
@@ -264,10 +311,10 @@ select:
   - platform: template
     name: "Display Page"
     id: page_sel
-    options: [Face, Clock, Message]
+    options: [Face, Clock, Message, Video]
     initial_option: Face
     optimistic: true
-    restore_value: true
+    restore_value: false       # Video needs the stream switch; always boot on Face
     on_value:
       - component.update: lcd
   - platform: template
@@ -290,6 +337,14 @@ select:
       - component.update: lcd
 
 text:
+  - platform: template
+    name: "Video URL"
+    id: video_url
+    mode: text
+    max_length: 255
+    optimistic: true
+    restore_value: true
+    initial_value: "http://homeassistant.local:1984/api/frame.jpeg?src=cam&width=240&height=296"
   - platform: template
     name: "Message Title"
     id: msg_title
@@ -433,6 +488,24 @@ light:
     default_transition_length: 0s   # no fade, snappy dimming
 
 switch:
+  # Start/stop the snapshot video on the Video page. Set "Video URL" first.
+  - platform: template
+    name: "Video Stream"
+    id: video_stream
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - select.set:
+          id: page_sel
+          option: Video
+      - online_image.set_url:
+          id: video_img
+          url: !lambda 'return id(video_url).state;'
+    turn_off_action:
+      - select.set:
+          id: page_sel
+          option: Face
+
   - platform: gpio
     id: power_off_latch
     pin: 2
