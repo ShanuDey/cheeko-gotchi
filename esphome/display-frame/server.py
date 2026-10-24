@@ -1,10 +1,10 @@
 """Serve a snapshot of a web page as a 240x296 JPEG at /frame.jpg.
 
 The page is one of the bundled pages/*.html (/frame.jpg?page=<name>, listed at /presets),
-a custom /frame.jpg?url=<page>, or TARGET_URL when neither is given. ?margin=<px> sets the
-black border for that request (default MARGIN_PX). Custom URLs must be
-http(s), and ALLOWED_HOSTS can restrict http(s) further, so the
-service is not an open proxy.
+or a custom /frame.jpg?url=<page>; with neither, the first bundled page is shown.
+?margin=<px> sets the black border for that request (default MARGIN_PX). Custom URLs must
+be http(s), and ALLOWED_HOSTS can restrict http(s) further, so the service is not an open
+proxy.
 """
 import io
 import os
@@ -29,7 +29,6 @@ CLIENT_TIMEOUT_S = 10
 MAX_FAILURES = 5
 MAX_MARGIN_PX = 20
 
-TARGET_URL = os.environ["TARGET_URL"]
 MARGIN_PX = int(os.environ.get("MARGIN_PX", "0"))  # default; a request can override with ?margin=
 JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "80"))
 REFRESH_SECONDS = float(os.environ.get("REFRESH_SECONDS", "30"))
@@ -62,7 +61,7 @@ def preset_names():
 
 
 def allowed(url):
-    """Custom pages the device may request: http(s), or the TARGET_URL default.
+    """Custom pages the device may request: http(s) only.
 
     file:// is refused (bundled pages go through ?page=): a percent-encoded ".." slips past
     any string check on the path and Chromium would decode it. ALLOWED_HOSTS (comma
@@ -70,8 +69,6 @@ def allowed(url):
     proxy to everything on the network.
     """
     parts = urlsplit(url)
-    if url == TARGET_URL:
-        return True
     if parts.scheme in ("http", "https") and parts.hostname:
         return not ALLOWED_HOSTS or parts.hostname in ALLOWED_HOSTS
     return False
@@ -203,17 +200,18 @@ def make_handler(browser):
                 if not 0 <= margin <= MAX_MARGIN_PX:
                     self.send_error(400, f"margin must be 0 to {MAX_MARGIN_PX}")
                     return
-                if "page" in query:
-                    name = query["page"][0]
-                    if name not in preset_names():
-                        self.send_error(400, "unknown page")
-                        return
-                    url = f"file://{PAGES_DIR}/{name}.html"
-                else:
-                    url = query.get("url", [TARGET_URL])[0]
+                if "url" in query and "page" not in query:
+                    url = query["url"][0]
                     if not allowed(url):
                         self.send_error(400, "url not allowed")
                         return
+                else:
+                    names = preset_names()
+                    name = query["page"][0] if "page" in query else (names[0] if names else "")
+                    if name not in names:
+                        self.send_error(400, "unknown page")
+                        return
+                    url = f"file://{PAGES_DIR}/{name}.html"
                 self.send_frame(url, margin)
             else:
                 self.send_error(404)

@@ -12,7 +12,7 @@ from `../wyoming-voice` so each stack updates on its own.
   entity with source `Custom`). Only `http(s)` is
   accepted (bundled pages go through `?page=`). Set `ALLOWED_HOSTS` (comma separated hostnames) to stop the service
   being used as a proxy to other hosts on your network. Presets are not affected.
-- With neither, the page is `TARGET_URL`.
+- With neither, the first bundled page (`clock`) is shown.
 - Frames are sent with `Cache-Control: no-store` and no `Last-Modified`. Otherwise
   the device gets `304 Not Modified` and stalls.
 - The page fills the whole 240x296 by default, so the rounded bezel hides what is in the
@@ -42,7 +42,7 @@ Anyone on your LAN who can reach port 28241 controls the browser and any saved
 login, so do not leave it on. Chromium only listens on localhost, so `server.py`
 relays the port itself (the same job `remote-webview` gives to a `socat` container).
 
-## Deploy (Dockge)
+## Deploy
 
 `.github/workflows/display-frame.yml` builds this folder and pushes
 `ghcr.io/shanudey/display-frame`:
@@ -60,8 +60,9 @@ Actions tab. Every build also gets a `sha-` tag.
 1. After the first run, set the package to **Public** (GitHub, Packages,
    `display-frame`, Package settings). New packages are private; otherwise
    the host needs `docker login ghcr.io` with a `read:packages` token.
-2. In Dockge, create a stack, paste `docker-compose.yaml`, and put
-   `TARGET_URL=file:///app/pages/clock.html` in the `.env` box. Deploy.
+2. On your Docker host, run `docker-compose.yaml` (`docker compose up -d`, or paste it
+   into whatever manages your stacks). No `.env` is needed; see `.env.example` for the
+   optional settings.
 3. Set `display_frame_server: "http://<docker-host-ip>:28240"` in the ESPHome
    `secrets.yaml` (use the IP, not a `.local` name) and reflash. Change the
    page any time from HA with **Display Frame Source** (or **Display Frame URL**
@@ -73,7 +74,7 @@ Use `:latest` for the always-on stack, `:beta` for the dev branch and `:alpha` t
 ## Run locally
 
 `docker-compose.dev.yaml` adds `build: .` so Docker Desktop builds from this
-folder. Do not paste it into Dockge.
+folder. Use it only on a machine that has this source.
 
 ```bash
 cp .env.example .env
@@ -93,5 +94,4 @@ services. To change it, edit `ports:` in `docker-compose.yaml`, `PORT` in
 ## Troubleshooting
 
 - **502:** `docker compose logs` shows the `frame failed:` reason.
-- **`set TARGET_URL in .env`:** the `.env` box is empty or unsaved.
 - **Connection refused after changing the port:** the three places above disagree.

@@ -7,7 +7,6 @@ services:
       - 28240:28240
       - 28241:9222     # DevTools (chrome://inspect), only listens when DEVTOOLS=1
     environment:
-      TARGET_URL: ${TARGET_URL:?set TARGET_URL in .env}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
       DEVTOOLS: ${DEVTOOLS:-}
       USER_DATA_DIR: /pw-data
