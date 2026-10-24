@@ -49,6 +49,8 @@ Turn on the **Wake Word Mode** switch in HA to use a wake word as well: the devi
 runs ESPHome's on-device `micro_wake_word` (models `okay_nabu` and `hey_jarvis`) and
 only talks to HA once it hears one. Pick the active model in the device's **Wake word**
 select in HA. Holding Volume Up still works in both modes. The switch survives reboots.
+A green dot at the top center of the screen shows whenever the mic is open (wake word
+listening or recording a request). It is not drawn on the WebView page.
 HA's openWakeWord add-on is not used: HA only offers a wake word for an ESPHome device
 from the models the device itself reports.
 

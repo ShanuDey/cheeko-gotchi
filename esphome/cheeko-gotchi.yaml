@@ -193,6 +193,13 @@ display:
       const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);  // 0 happy 1 sad 2 sleepy 3 surprised
       const int va = id(va_state);                           // 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
 
+      // Privacy indicator: green dot at top center while the mic is open (wake word listening or
+      // voice assistant capturing). Not drawn on the WebView page, which the component owns.
+      const bool mic_on = id(mww).is_running() || va == 1;
+      auto draw_mic = [&]() {
+        if (mic_on) it.filled_circle(120, 12, 6, Color(0, 220, 90));
+      };
+
       // The WebView page is drawn by the remote_webview component straight to the panel, so
       // this lambda must draw nothing while it shows. The voice assistant, audio and firmware
       // updates take the screen back: set_active(false) waits for a tile already being drawn.
@@ -233,6 +240,7 @@ display:
           it.print(120, 130, id(font_med), FG, TextAlign::CENTER, "No frame");
           it.print(120, 170, id(font_small), DIM, TextAlign::CENTER, "check Frame URL");
         }
+        draw_mic();
         if (vol_vis) draw_volume();
         return;
       }
@@ -344,6 +352,7 @@ display:
         }
         if (!line.empty()) emit(line);
       }
+      draw_mic();
       if (vol_vis) draw_volume();
 
 # ------------------------------------------------------------------ frame
@@ -885,6 +894,9 @@ globals:
   - id: was_speaking
     type: bool
     initial_value: "false"
+  - id: mic_was_on             # last mic state drawn, to redraw the mic dot when it changes
+    type: bool
+    initial_value: "false"
   - id: va_state               # voice assistant: 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
     type: int
     initial_value: "0"
@@ -958,5 +970,8 @@ interval:
           const auto mp = id(gotchi_player).state;
           const bool playing = mp == media_player::MEDIA_PLAYER_STATE_PLAYING ||
                                mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING;
-          if (playing || id(va_state) == 1 || id(va_state) == 2 || playing != id(was_speaking)) id(lcd).update();
+          const bool mic_on = id(mww).is_running() || id(va_state) == 1;
+          if (playing || id(va_state) == 1 || id(va_state) == 2 || playing != id(was_speaking) ||
+              mic_on != id(mic_was_on)) id(lcd).update();
           id(was_speaking) = playing;
+          id(mic_was_on) = mic_on;
