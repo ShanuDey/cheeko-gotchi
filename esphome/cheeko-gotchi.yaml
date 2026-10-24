@@ -379,6 +379,28 @@ image:
           wait_ms: 1000
 
 script:
+  # Resume on-device wake word listening after the reply has played, but only in Wake Word Mode.
+  - id: start_wake_word
+    mode: restart
+    then:
+      # Mic and speaker share one I2S bus. on_end fires before the reply finishes playing, so
+      # wait for playback to start and end before the wake word takes the mic back.
+      - wait_until:
+          condition:
+            not:
+              media_player.is_idle: gotchi_player
+          timeout: 5s            # no reply (error, cancelled): carry on
+      - wait_until:
+          condition:
+            media_player.is_idle: gotchi_player
+          timeout: 60s
+      - delay: 300ms
+      - if:
+          condition:
+            switch.is_on: wake_word_mode
+          then:
+            - micro_wake_word.start:
+
   # Volume popup: the display lambda draws the bar while vol_until is in the future, then this
   # redraws once more so the popup disappears.
   - id: show_volume
@@ -656,15 +678,28 @@ media_player:
       sample_rate: 16000
       num_channels: 1
 
+# On-device wake word. HA lists these models in the device's "Wake word" select because it is
+# linked to voice_assistant below. Runs only while the "Wake Word Mode" switch is on.
+micro_wake_word:
+  id: mww
+  microphone: mic
+  models:
+    - okay_nabu
+    - hey_jarvis
+  on_wake_word_detected:
+    - voice_assistant.start:
+        wake_word: !lambda return wake_word;
+
 # Voice assistant: hold Volume Up to talk, or turn on the "Wake Word Mode" switch in HA to
 # listen for the wake word instead. HA's Assist pipeline (speech to text, conversation
-# agent, text to speech, and the openWakeWord model) is chosen in the device's settings in HA.
+# agent, text to speech) and the wake word are chosen in the device's settings in HA.
 # Replies play through the Speaker media player above.
 voice_assistant:
   id: va
   microphone: mic
   media_player: gotchi_player
-  use_wake_word: true          # lets HA offer a wake word for this device; only streams while Wake Word Mode is on
+  micro_wake_word: mww
+  use_wake_word: false         # wake word is detected on the device, not by HA
   noise_suppression_level: 2
   auto_gain: 31dBFS
   volume_multiplier: 2.0
@@ -688,11 +723,13 @@ voice_assistant:
     - lambda: |-
         id(va_state) = 0;
     - component.update: lcd
+    - script.execute: start_wake_word
   on_end:
     - delay: 100ms
     - lambda: |-
         if (id(va_state) != 4) id(va_state) = 0;
     - component.update: lcd
+    - script.execute: start_wake_word
 
 output:
   - platform: ledc
@@ -754,6 +791,17 @@ light:
       - component.update: lcd
 
 switch:
+  # Off: push-to-talk only. On: the on-device wake word also listens. Remembered across reboots.
+  - platform: template
+    name: "Wake Word Mode"
+    id: wake_word_mode
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - micro_wake_word.start:
+    turn_off_action:
+      - micro_wake_word.stop:
+
   # Mirrors the WebView page left to right in software. Normally off (the display's mirror_x
   # already orients every page); a debugging aid if only the web page ever looks flipped.
   # Not remembered: it is off after every reboot.
@@ -762,7 +810,6 @@ switch:
     id: webview_flip
     optimistic: true
     restore_mode: ALWAYS_OFF
-    entity_category: config
     turn_on_action:
       - lambda: |-
           id(rwv).set_flip_x(true);
@@ -803,10 +850,12 @@ binary_sensor:
         max_length: 10s
         then:
           - if:
-              condition: voice_assistant.is_running
+              condition:
+                lambda: 'return id(va_state) != 0;'
               then:
-                - voice_assistant.stop:
+                - voice_assistant.stop:     # cancel an active conversation
               else:
+                - micro_wake_word.stop:          # free the mic for push-to-talk
                 - voice_assistant.start:
 
   - platform: gpio
