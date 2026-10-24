@@ -4,6 +4,8 @@
 esphome:
   name: cgotchi
   friendly_name: Cheeko
+  includes:
+    - face_colors.h
   # GPIO 2 latches power OFF if driven HIGH (SKILL.md Gotcha 8). Force it LOW
   # as early as possible so the device never cuts its own power.
   on_boot:
@@ -152,6 +154,9 @@ display:
       if (speaking || booting || va != 0) page = 0;          // face talks while audio plays
 
       if (page == 0) {
+        // The face color is chosen in HA; the clock, message and OTA screens keep the blue ACCENT.
+        const auto &fc = id(face_color).remote_values;
+        const Color ACCENT((uint8_t) (fc.get_red() * 255), (uint8_t) (fc.get_green() * 255), (uint8_t) (fc.get_blue() * 255));
         const int cx = 120, ey = 110;
         // Curved mouth: dir +1 smile, -1 frown.
         auto curve = [&](int cy, int w, int h, int dir) {
@@ -341,6 +346,24 @@ select:
     on_value:
       - component.update: lcd
   - platform: template
+    name: "Face Color Preset"
+    id: face_preset_sel
+    options: [Blue, Green, Pink, Orange, Purple, Red, Yellow, White, Custom]
+    initial_option: Blue
+    optimistic: true
+    restore_value: true
+    on_value:
+      - lambda: |-
+          // Custom keeps whatever the Face Color picker holds.
+          for (const auto &p : FACE_PRESETS) {
+            if (x == p.name) {
+              auto call = id(face_color).turn_on();
+              call.set_rgb(p.r, p.g, p.b);
+              call.set_transition_length(0);
+              call.perform();
+            }
+          }
+  - platform: template
     name: "Face Expression"
     id: face_sel
     options: [Happy, Sad, Sleepy, Surprised]
@@ -492,6 +515,18 @@ output:
     id: backlight_pwm
     pin: 13                    # LCD backlight enable, HIGH = on
     frequency: 1000Hz
+  - platform: template
+    id: face_r
+    type: float
+    write_action: []
+  - platform: template
+    id: face_g
+    type: float
+    write_action: []
+  - platform: template
+    id: face_b
+    type: float
+    write_action: []
 
 light:
   - platform: monochromatic
@@ -500,6 +535,39 @@ light:
     output: backlight_pwm
     restore_mode: RESTORE_DEFAULT_ON
     default_transition_length: 0s   # no fade, snappy dimming
+
+  # Face color picker. The outputs are dummies: the light only stores the color the display reads.
+  - platform: rgb
+    name: "Face Color"
+    id: face_color
+    red: face_r
+    green: face_g
+    blue: face_b
+    restore_mode: RESTORE_DEFAULT_ON
+    default_transition_length: 0s
+    initial_state:
+      color_mode: rgb
+      red: 0%
+      green: 78%
+      blue: 100%
+    on_state:
+      - lambda: |-
+          // Mirror the picker into the preset select: a matching preset, else Custom.
+          const auto &v = id(face_color).remote_values;
+          const char *match = "Custom";
+          size_t match_idx = sizeof(FACE_PRESETS) / sizeof(FACE_PRESETS[0]);   // Custom is the last option
+          for (size_t i = 0; i < match_idx; i++) {
+            const auto &p = FACE_PRESETS[i];
+            if (fabsf(v.get_red() - p.r) < 0.02f && fabsf(v.get_green() - p.g) < 0.02f &&
+                fabsf(v.get_blue() - p.b) < 0.02f) {
+              match = p.name;
+              match_idx = i;
+              break;
+            }
+          }
+          if (id(face_preset_sel).active_index().value_or(match_idx + 1) != match_idx)
+            id(face_preset_sel).make_call().set_option(match).perform();
+      - component.update: lcd
 
 switch:
   # Start/stop the snapshot video on the Video page. Set "Video URL" first.

@@ -146,7 +146,8 @@ bootloader at `0x410000`. To keep a backup first:
   `Assist Pipeline ended` when it finishes.
 - HA: the device page has **Backlight**, the **Speaker** media player,
   **Display Page**, **Clock Format** (12 or 24 hour), **Face Expression**,
-  **Message Title/Body**, **Mic Level**
+  **Face Color** (colour picker for the face only) with **Face Color Preset**
+  (Blue, Green, Pink, ... or Custom), **Message Title/Body**, **Mic Level**
   and three button sensors. Mic Level only updates while something else is
   capturing audio (it is passive).
 
@@ -198,7 +199,7 @@ bootloader at `0x410000`. To keep a backup first:
   the board has no fuel gauge on I2C and no known battery-voltage ADC pin.
 - A failed OTA that resets before boot completes rolls back to the previous
   build. Check `compiled on` in the log to see which build is running.
-- Saved settings: **Clock Format**, **Face Expression**, **Message Title/Body**
+- Saved settings: **Clock Format**, **Face Expression**, **Face Color Preset**, **Message Title/Body**
   and **Video URL** use `restore_value: true`, so they live in flash and
   survive power-off, reboots and OTA. Renaming one or changing its options in
   the YAML resets it to the default once; a full flash erase clears them all.
