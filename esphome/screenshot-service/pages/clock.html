@@ -1,0 +1,27 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<style>
+  /* Rendered at 200x256: the service adds the margin that clears the rounded corners. */
+  html, body { margin: 0; height: 100%; background: #000; color: #fff;
+    font-family: Arial, Helvetica, sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #time { font-size: 64px; font-weight: bold; color: #00c8ff; }
+  #sec { font-size: 28px; color: #828282; margin-top: 4px; }
+  #date { font-size: 22px; margin-top: 18px; }
+</style>
+<div id="time"></div>
+<div id="sec"></div>
+<div id="date"></div>
+<script>
+  const pad = n => String(n).padStart(2, "0");
+  function tick() {
+    const d = new Date();
+    document.getElementById("time").textContent = pad(d.getHours()) + ":" + pad(d.getMinutes());
+    document.getElementById("sec").textContent = pad(d.getSeconds());
+    document.getElementById("date").textContent =
+      d.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
+  }
+  tick();
+  setInterval(tick, 1000);
+</script>
