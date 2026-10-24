@@ -13,5 +13,5 @@ idf_component_register(
     "services/display_service.cc"
     "services/touch_service.cc"
   INCLUDE_DIRS "."
+  REQUIRES driver esp_lcd esp_lcd_jd9853 esp_lvgl_port lvgl
 )
-

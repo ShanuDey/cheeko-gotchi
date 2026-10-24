@@ -27,3 +27,7 @@ demo/out/
 # --- Python ---
 __pycache__/
 *.pyc
+
+# --- ESPHome secrets ---
+esphome/secrets.yaml
+esphome/.esphome/

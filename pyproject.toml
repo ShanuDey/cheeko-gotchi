@@ -1,0 +1,13 @@
+[project]
+name = "cheeko-gotchi"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "esphome==2026.10.0",
+    "esptool>=5.4.0",
+]

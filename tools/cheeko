@@ -14,6 +14,17 @@ MANIFEST_SCHEMA = ROOT / "schemas" / "cheekoai-app-manifest.schema.json"
 
 
 def find_ports():
+    if os.name == "nt":
+        import winreg
+
+        ports = []
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DEVICEMAP\SERIALCOMM") as key:
+                for i in range(winreg.QueryInfoKey(key)[1]):
+                    ports.append(winreg.EnumValue(key, i)[1])
+        except OSError:
+            pass
+        return sorted(set(ports))
     patterns = [
         "/dev/cu.usbmodem*",
         "/dev/ttyACM*",
@@ -30,8 +41,13 @@ def command_exists(name):
     return shutil.which(name) is not None
 
 
+def idf_active():
+    # idf.py is a .py script, which shutil.which misses on Windows; IDF_PATH is set by export/eim shell.
+    return command_exists("idf.py") or bool(os.getenv("IDF_PATH"))
+
+
 def idf_status():
-    if command_exists("idf.py"):
+    if idf_active():
         return "ok"
     known_exports = [
         Path.home() / "esp" / "v5.5.2" / "esp-idf" / "export.sh",
@@ -58,8 +74,11 @@ def print_doctor(args):
     print()
     if not ports:
         print("Plug in Cheeko Gotchi with a data USB-C cable, then run ./tools/cheeko ports")
-    if not command_exists("idf.py"):
-        print("ESP-IDF is not on PATH. Try: source ~/esp/v5.5.2/esp-idf/export.sh")
+    if not idf_active():
+        if os.name == "nt":
+            print("ESP-IDF is not active. Try: eim shell")
+        else:
+            print("ESP-IDF is not on PATH. Try: source ~/esp/v5.5.2/esp-idf/export.sh")
 
 
 def print_ports(args):
