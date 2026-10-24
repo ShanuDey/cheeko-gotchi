@@ -1,6 +1,6 @@
 #pragma once
 // Face color presets shared by the "Face Color Preset" select and the "Face Color" light.
-// Keep the names in sync with the select options in cheeko-gotchi.yaml.
+// Keep the names in sync with the select options in cgotchi.yaml.
 struct FacePreset {
   const char *name;
   float r, g, b;

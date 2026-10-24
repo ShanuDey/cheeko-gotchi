@@ -2,7 +2,7 @@
 
 Copy of `components/remote_webview` from
 [strange-v/RemoteWebViewClient](https://github.com/strange-v/RemoteWebViewClient) (MIT, see
-`LICENSE`), taken from `main` on 2026-10-24. Used by `esphome/cheeko-gotchi.yaml` and
+`LICENSE`), taken from `main` on 2026-10-24. Used by `esphome/cgotchi.yaml` and
 `esphome/webview-test.yaml`-style configs. The server side is `esphome/remote-webview/`.
 
 ## Why a copy

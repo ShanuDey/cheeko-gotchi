@@ -4,7 +4,7 @@ Runs the board under ESPHome so it shows up in Home Assistant (HA). Pins come
 from [SKILL.md](../SKILL.md). This **replaces** the Cheeko app firmware; you
 can't run both.
 
-Device name: `cgotchi`. Config: [cheeko-gotchi.yaml](cheeko-gotchi.yaml).
+Device name: `cgotchi`. Config: [cgotchi.yaml](cgotchi.yaml).
 
 ## Status
 
@@ -29,7 +29,7 @@ Device name: `cgotchi`. Config: [cheeko-gotchi.yaml](cheeko-gotchi.yaml).
 Two ways to build. Both need the secrets below.
 
 **HA add-on (what we use):** open ESPHome Device Builder, edit `cgotchi`, paste
-the contents of `cheeko-gotchi.yaml`, then **Install**. Secrets go in the
+the contents of `cgotchi.yaml`, then **Install**. Secrets go in the
 dashboard's **Secrets** page.
 
 **Local:** `uv sync` (esphome is a dev dependency, pinned in `uv.lock`), then
@@ -119,10 +119,10 @@ Catches YAML errors in one pass instead of one at a time in the editor. Run
 from **PowerShell** in `esphome/`. Don't use Git Bash: ESP-IDF fails there with
 `MSys/Mingw is not supported`.
 ```powershell
-uv run esphome config cheeko-gotchi.yaml
+uv run esphome config cgotchi.yaml
 ```
 This checks the YAML only. C++ lambdas (tone generator, GPIO 3 debug log) are
-checked by `uv run esphome compile cheeko-gotchi.yaml`, which is slow the first
+checked by `uv run esphome compile cgotchi.yaml`, which is slow the first
 time. Run both before every flash, especially after editing a `lambda:`. Keep
 the pinned ESPHome version equal to the dashboard's (shown at its bottom):
 `uv add --dev esphome==<version>`.
@@ -133,13 +133,13 @@ the wrong Wi-Fi credentials. Flash only with your real file.
 
 ## Flash
 
-First flash is over USB. Local: `uv run esphome run cheeko-gotchi.yaml --device COMx`
+First flash is over USB. Local: `uv run esphome run cgotchi.yaml --device COMx`
 (find the port with `../tools/cheeko ports`). Or download the factory image
 from the dashboard and flash it with https://web.esphome.io in Chrome/Edge.
 After flashing, unplug and replug USB; the board stays in download mode.
 
 After that, use **Install → Wirelessly**, or locally
-`uv run esphome run cheeko-gotchi.yaml --device <ip> --no-logs`. Use the device
+`uv run esphome run cgotchi.yaml --device <ip> --no-logs`. Use the device
 IP (HA device page), not `cgotchi.local`; mDNS is unreliable on Windows. OTA is
 encrypted: it reuses `api_key`.
 If a first encrypted install is refused, add `allow_plaintext_upload: true`
