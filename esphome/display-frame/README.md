@@ -15,7 +15,9 @@ from `../wyoming-voice` so each stack updates on its own.
 - With neither, the page is `TARGET_URL`.
 - Frames are sent with `Cache-Control: no-store` and no `Last-Modified`. Otherwise
   the device gets `304 Not Modified` and stalls.
-- `MARGIN_PX` of black border keeps content out of the rounded screen corners.
+- The page fills the whole 240x296 by default, so the rounded bezel hides what is in the
+  four corners. A black border keeps content clear of them: set `MARGIN_PX` (0 to 20) in
+  `.env` and redeploy. `/frame.jpg?margin=<px>` overrides it for one request.
 - The default page is the built-in clock (`pages/clock.html`). Many public sites
   block headless browsers, so use your own pages or sites that allow it.
 - One browser page serves one request at a time. A failed frame returns 502; the

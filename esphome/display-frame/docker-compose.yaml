@@ -11,7 +11,7 @@ services:
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
       DEVTOOLS: ${DEVTOOLS:-}
       USER_DATA_DIR: /pw-data
-      MARGIN_PX: ${MARGIN_PX:-20}
+      MARGIN_PX: ${MARGIN_PX:-0}
       JPEG_QUALITY: ${JPEG_QUALITY:-80}
       REFRESH_SECONDS: ${REFRESH_SECONDS:-30}
       TIMEZONE: ${TIMEZONE:-Asia/Kolkata}
