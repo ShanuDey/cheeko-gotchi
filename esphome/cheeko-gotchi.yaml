@@ -141,12 +141,14 @@ display:
       const bool speaking = !booting && (mp == media_player::MEDIA_PLAYER_STATE_PLAYING ||
                                          mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
       int page = id(page_sel).active_index().value_or(0);   // 0 Face, 1 Clock, 2 Message, 3 Video
-      if (page == 3) {                                       // video: latest JPEG frame, full screen
+      const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);  // 0 happy 1 sad 2 sleepy 3 surprised
+      const int va = id(va_state);                           // 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
+      // Video: latest JPEG frame, full screen. Audio can play over it, but the voice
+      // assistant still takes the screen (falls through to the face below).
+      if (page == 3 && va == 0 && !booting) {
         it.image(0, 0, id(video_img));
         return;
       }
-      const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);  // 0 happy 1 sad 2 sleepy 3 surprised
-      const int va = id(va_state);                           // 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
       if (speaking || booting || va != 0) page = 0;          // face talks while audio plays
 
       if (page == 0) {
@@ -258,7 +260,7 @@ display:
 # The next fetch starts as soon as the previous frame is decoded, so the frame
 # rate is whatever the network, server and decoder allow (expect a few fps).
 # Serve frames already scaled to 240x296: the device only decodes, it does not
-# shrink. go2rtc example: http://<host>:1984/api/frame.jpeg?src=<stream>&width=240&height=296
+# shrink. See screenshot-service/ for a ready-made frame server.
 http_request:
   timeout: 5s
   buffer_size_rx: 4096
@@ -266,7 +268,7 @@ http_request:
 image:
   - platform: online_image
     id: video_img
-    url: "http://homeassistant.local:1984/api/frame.jpeg?src=cam&width=240&height=296"
+    url: "http://homeassistant.local:8080/frame.jpg"   # placeholder; Video URL in HA replaces it
     format: JPEG
     type: RGB565
     resize: 240x296
@@ -279,20 +281,26 @@ image:
             - component.update: lcd
           else:
             - delay: 200ms          # unchanged frame: do not spin on repeated 304s
+      # Never start the next download from inside this callback: the component
+      # tears down its connection right after it returns, which would abort the
+      # new download and release the image (black screen). The delay defers it.
+      - delay: 50ms
+      # Keep fetching only while the stream is on AND the Video page is showing (page 3),
+      # so switching pages from HA stops the background fetching.
       - if:
           condition:
-            switch.is_on: video_stream
+            lambda: 'return id(video_stream).state && id(page_sel).active_index().value_or(0) == 3;'
           then:
             - component.update: video_img
     on_error:
       - if:
           condition:
-            switch.is_on: video_stream
+            lambda: 'return id(video_stream).state && id(page_sel).active_index().value_or(0) == 3;'
           then:
             - delay: 1s        # back off so a dead server does not spin the CPU
             - if:
                 condition:
-                  switch.is_on: video_stream
+                  lambda: 'return id(video_stream).state && id(page_sel).active_index().value_or(0) == 3;'
                 then:
                   - component.update: video_img
 
@@ -317,6 +325,12 @@ select:
     restore_value: false       # Video needs the stream switch; always boot on Face
     on_value:
       - component.update: lcd
+      # Back on the Video page with the stream still on: the fetch loop had stopped.
+      - if:
+          condition:
+            lambda: 'return x == "Video" && id(video_stream).state;'
+          then:
+            - component.update: video_img
   - platform: template
     name: "Clock Format"
     id: clock_fmt_sel
@@ -344,7 +358,7 @@ text:
     max_length: 255
     optimistic: true
     restore_value: true
-    initial_value: "http://homeassistant.local:1984/api/frame.jpeg?src=cam&width=240&height=296"
+    initial_value: "http://homeassistant.local:8080/frame.jpg"
   - platform: template
     name: "Message Title"
     id: msg_title
@@ -601,6 +615,10 @@ interval:
           if (now && !down && millis() - last_tap > 400) {
             last_tap = millis();
             ESP_LOGI("touch", "tap raw x=%d y=%d", ((d[1] & 0x0f) << 8) | d[2], ((d[3] & 0x0f) << 8) | d[4]);
-            id(page_sel).make_call().select_next(true).perform();
+            // Taps cycle Face, Clock, Message. Video is entered only through the Video Stream
+            // switch, and a tap on it ends the stream (which returns to Face).
+            const int idx = id(page_sel).active_index().value_or(0);
+            if (idx == 3) id(video_stream).turn_off();
+            else id(page_sel).make_call().set_index((idx + 1) % 3).perform();
           }
           down = now;

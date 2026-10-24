@@ -19,6 +19,7 @@ Device name: `cgotchi`. Config: [cheeko-gotchi.yaml](cheeko-gotchi.yaml).
 | Charging detect (GPIO 37) | not possible, see Notes |
 | Middle button (GPIO 3) | not working, see Troubleshooting |
 | Display: Face, Clock and Message pages, talking mouth while audio plays | works |
+| Video page (JPEG snapshots from a URL) | works: tested with the screenshot-service clock; see Video below |
 | Clock format (12/24 hour) | works: **Clock Format** select; the choice is stored in flash and survives power-off and OTA |
 | Speaker (HA media player), mic level | works |
 | Touch (CST810), accelerometer (LIS2DH12) | not added yet |
@@ -58,6 +59,39 @@ them. Tune `mic_gain` (under `audio_adc`) and `noise_suppression_level`,
 `auto_gain` and `volume_multiplier` (under `voice_assistant`) if speech is
 quiet or misheard. The mic also hears the speaker, so interrupting a reply is
 unreliable.
+
+## Screen shape: rounded corners
+
+The panel is a 240x296 rectangle, but the bezel and glass have rounded corners
+that hide the pixels in all four corners (the radius is not measured; about
+25 to 30 px is a guess). Keep text, icons and anything important about 16 to
+20 px away from the corners, in display lambdas, video frames and website
+screenshots alike. The Face, Clock and Message pages are centred and already
+fit. Content in the middle of each edge stays visible.
+
+## Video (JPEG snapshots)
+
+ESPHome has no video player, so the **Video** page shows JPEG snapshots fetched
+one after another over HTTP (a few frames per second, no audio).
+
+1. Serve JPEG frames already scaled to 240x296. The device only decodes; it
+   does not resize. Leave a safe margin for the rounded corners (see above).
+   [screenshot-service/](screenshot-service/README.md) does this: it renders a
+   page (a built-in clock by default) in headless Chromium and serves it at
+   `http://<docker-host-ip>:8080/frame.jpg`.
+2. In HA, set **Video URL** on the device to the frame address.
+3. Turn **Video Stream** on. It switches to the Video page and starts the loop.
+   Turning it off returns to the Face page.
+
+The server must not send `Last-Modified` or allow caching (send
+`Cache-Control: no-store`). Otherwise the device sends `If-Modified-Since`,
+gets `304 Not Modified`, and the log fills with `HTTP Request failed; Code: 304`.
+The page select is not restored on boot, so a reboot lands on Face.
+
+The YAML never starts the next download from inside `on_download_finished`; it
+waits 50 ms first. ESPHome tears down the connection right after that callback,
+so a download started inside it is aborted and the image is released (frozen
+frame, then a black screen).
 
 ## Validate before installing
 
@@ -164,8 +198,8 @@ bootloader at `0x410000`. To keep a backup first:
   the board has no fuel gauge on I2C and no known battery-voltage ADC pin.
 - A failed OTA that resets before boot completes rolls back to the previous
   build. Check `compiled on` in the log to see which build is running.
-- Saved settings: **Display Page**, **Clock Format**, **Face Expression** and
-  **Message Title/Body** use `restore_value: true`, so they live in flash and
+- Saved settings: **Clock Format**, **Face Expression**, **Message Title/Body**
+  and **Video URL** use `restore_value: true`, so they live in flash and
   survive power-off, reboots and OTA. Renaming one or changing its options in
   the YAML resets it to the default once; a full flash erase clears them all.
 - There is no battery-backed clock. After power-off the Clock page shows
