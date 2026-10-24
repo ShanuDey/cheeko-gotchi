@@ -1,0 +1,24 @@
+services:
+  display-frame:
+    image: ghcr.io/shanudey/display-frame:latest
+    container_name: display-frame
+    init: true
+    ports:
+      - 28240:28240
+      - 28241:9222     # DevTools (chrome://inspect), only listens when DEVTOOLS=1
+    environment:
+      TARGET_URL: ${TARGET_URL:?set TARGET_URL in .env}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      DEVTOOLS: ${DEVTOOLS:-}
+      USER_DATA_DIR: /pw-data
+      MARGIN_PX: ${MARGIN_PX:-20}
+      JPEG_QUALITY: ${JPEG_QUALITY:-80}
+      REFRESH_SECONDS: ${REFRESH_SECONDS:-30}
+      TIMEZONE: ${TIMEZONE:-Asia/Kolkata}
+    volumes:
+      - pw-data:/pw-data    # keeps logins made through DevTools between restarts
+    shm_size: 256mb   # Chromium crashes on Docker's default 64 MB /dev/shm
+    restart: unless-stopped
+
+volumes:
+  pw-data:

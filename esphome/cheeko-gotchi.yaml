@@ -1,3 +1,8 @@
+# Display frame service the Display Frame page fetches frames from, e.g. "http://192.168.29.127:28240"
+# (secrets.yaml). The page it renders is the "Display Frame URL" entity, editable from HA.
+substitutions:
+  display_frame_server: !secret display_frame_server
+
 esphome:
   name: cgotchi
   friendly_name: Cheeko
@@ -184,7 +189,7 @@ display:
       const auto mp = id(gotchi_player).state;
       const bool speaking = !booting && (mp == media_player::MEDIA_PLAYER_STATE_PLAYING ||
                                          mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
-      int page = id(page_sel).active_index().value_or(0);   // 0 Face, 1 Clock, 2 Message, 3 Video, 4 WebView
+      int page = id(page_sel).active_index().value_or(0);   // 0 Face, 1 Clock, 2 Message, 3 Display Frame, 4 WebView
       const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);  // 0 happy 1 sad 2 sleepy 3 surprised
       const int va = id(va_state);                           // 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
 
@@ -217,16 +222,16 @@ display:
         return;
       }
 
-      // Audio can play over the video, but the voice assistant still takes the screen.
+      // Audio can play over the frame, but the voice assistant still takes the screen.
       if (page == 3 && va == 0 && !booting) {
-        const int vs = id(video_state);
+        const int vs = id(frame_state);
         if (vs == 1) {
-          it.image(0, 0, id(video_img));
+          it.image(0, 0, id(frame_img));
         } else if (vs == 0) {
           it.print(120, 140, id(font_med), DIM, TextAlign::CENTER, "Loading...");
         } else {
-          it.print(120, 130, id(font_med), FG, TextAlign::CENTER, "No video");
-          it.print(120, 170, id(font_small), DIM, TextAlign::CENTER, "check Video URL");
+          it.print(120, 130, id(font_med), FG, TextAlign::CENTER, "No frame");
+          it.print(120, 170, id(font_small), DIM, TextAlign::CENTER, "check Frame URL");
         }
         if (vol_vis) draw_volume();
         return;
@@ -341,16 +346,16 @@ display:
       }
       if (vol_vis) draw_volume();
 
-# ------------------------------------------------------------------ video
+# ------------------------------------------------------------------ frame
 # JPEG snapshots fetched one after another and drawn full screen (a few fps, no
-# audio). Frames must already be 240x296; see screenshot-service/.
+# audio). Frames must already be 240x296; see display-frame/.
 http_request:
   timeout: 5s
   buffer_size_rx: 4096
 
 image:
   - platform: online_image
-    id: video_img
+    id: frame_img
     url: "http://homeassistant.local:8123/lovelace/default_view"
     format: JPEG
     type: RGB565
@@ -358,16 +363,16 @@ image:
     update_interval: never
     on_download_finished:
       - lambda: |-
-          id(video_state) = 1;
-          id(video_errors) = 0;
+          id(frame_state) = 1;
+          id(frame_errors) = 0;
       - component.update: lcd
       - script.execute:
           id: fetch_next
           wait_ms: !lambda 'return cached ? 250 : 50;'   # cached: server answered 304
     on_error:
       - lambda: |-
-          // Three failures in a row, so one dropped frame does not flash "No video".
-          if (++id(video_errors) >= 3) id(video_state) = 2;
+          // Three failures in a row, so one dropped frame does not flash "No frame".
+          if (++id(frame_errors) >= 3) id(frame_state) = 2;
       - component.update: lcd
       - script.execute:
           id: fetch_next
@@ -388,6 +393,28 @@ script:
   # The next download must not start inside the callbacks above: the component tears
   # down its connection right after they return, which aborts the new download and
   # releases the image (black screen). Running from a script defers it.
+  # Frame address = display-frame service (display_frame_server secret) + the page to render, which is the
+  # "Display Frame URL" entity so it can be changed from HA. The page is percent-encoded into ?url=.
+  - id: apply_frame_url
+    then:
+      - online_image.set_url:
+          id: frame_img
+          url: !lambda |-
+            static const char *HEX = "0123456789ABCDEF";
+            // A bundled page (preset names are [a-z0-9_-]) or, for Custom, the Display Frame URL.
+            const std::string src = id(frame_src).current_option().str();
+            if (src != "Custom") return std::string("${display_frame_server}/frame.jpg?page=") + src;
+            std::string out = std::string("${display_frame_server}") + "/frame.jpg?url=";
+            for (unsigned char c : id(frame_url).state) {
+              if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+                out += (char) c;
+              } else {
+                out += '%';
+                out += HEX[c >> 4];
+                out += HEX[c & 15];
+              }
+            }
+            return out;
   - id: fetch_next
     mode: restart
     parameters:
@@ -398,7 +425,7 @@ script:
           condition:
             lambda: 'return id(page_sel).active_index().value_or(0) == 3;'
           then:
-            - component.update: video_img
+            - component.update: frame_img
 
 # ---------------------------------------------------------------- webview
 # An HA dashboard rendered by the Remote WebView server (esphome/remote-webview/) and streamed
@@ -435,25 +462,38 @@ select:
   - platform: template
     name: "Display Page"
     id: page_sel
-    options: [Face, Clock, Message, Video, WebView]
+    options: [Face, Clock, Message, Display Frame, WebView]
     initial_option: Face
     optimistic: true
     restore_value: false       # always boot on Face
     on_value:
       - lambda: |-
-          if (x == "Video") {
-            id(video_state) = 0;
-            id(video_errors) = 0;
+          if (x == "Display Frame") {
+            id(frame_state) = 0;
+            id(frame_errors) = 0;
           }
       - component.update: lcd
-      # Fetching runs only while this page is Video: start it on entry, it stops itself on exit.
+      # Fetching runs only while this page is Display Frame: start it on entry, it stops itself on exit.
       - if:
           condition:
-            lambda: 'return x == "Video";'
+            lambda: 'return x == "Display Frame";'
           then:
-            - online_image.set_url:
-                id: video_img
-                url: !lambda 'return id(video_url).state;'
+            - script.execute: apply_frame_url
+  # Pages bundled with the display-frame service (its /presets list replaces these options a few
+  # seconds after boot) or Custom, which uses the Display Frame URL text below.
+  - platform: template
+    name: "Display Frame Source"
+    id: frame_src
+    options: [clock, Custom]
+    initial_option: clock
+    optimistic: true
+    restore_value: false       # the option list changes, so a saved index would not be reliable
+    on_value:
+      - if:
+          condition:
+            lambda: 'return id(page_sel).active_index().value_or(0) == 3;'
+          then:
+            - script.execute: apply_frame_url
   - platform: template
     name: "Clock Format"
     id: clock_fmt_sel
@@ -509,13 +549,20 @@ text:
             ESP_LOGI("webview", "not connected yet, URL queued");
           }
   - platform: template
-    name: "Video URL"
-    id: video_url
+    name: "Display Frame URL"
+    id: frame_url
     mode: text
     max_length: 255
     optimistic: true
     restore_value: true
-    initial_value: "http://homeassistant.local:8123/lovelace/default_view"
+    initial_value: !secret display_frame_url
+    set_action:
+      # Takes effect at once when the Display Frame page is showing; otherwise on next entry.
+      - if:
+          condition:
+            lambda: 'return id(page_sel).active_index().value_or(0) == 3;'
+          then:
+            - script.execute: apply_frame_url
   - platform: template
     name: "Message Title"
     id: msg_title
@@ -607,14 +654,15 @@ media_player:
       sample_rate: 16000
       num_channels: 1
 
-# Voice assistant: hold Volume Up to talk. HA's Assist pipeline (speech to text,
-# conversation agent, text to speech) is chosen in the device's settings in HA.
+# Voice assistant: hold Volume Up to talk, or turn on the "Wake Word Mode" switch in HA to
+# listen for the wake word instead. HA's Assist pipeline (speech to text, conversation
+# agent, text to speech, and the openWakeWord model) is chosen in the device's settings in HA.
 # Replies play through the Speaker media player above.
 voice_assistant:
   id: va
   microphone: mic
   media_player: gotchi_player
-  use_wake_word: false
+  use_wake_word: true          # lets HA offer a wake word for this device; only streams while Wake Word Mode is on
   noise_suppression_level: 2
   auto_gain: 31dBFS
   volume_multiplier: 2.0
@@ -773,7 +821,7 @@ binary_sensor:
         then:
           - media_player.volume_down: gotchi_player
           - script.execute: show_volume
-      - min_length: 700ms        # long press: next page (Face, Clock, Message, Video, WebView)
+      - min_length: 700ms        # long press: next page (Face, Clock, Message, Display Frame, WebView)
         max_length: 10s
         then:
           - select.next:
@@ -795,17 +843,60 @@ globals:
   - id: ota_pct
     type: int
     initial_value: "0"
-  - id: video_state            # 0 loading, 1 playing, 2 no video
+  - id: frame_state            # 0 loading, 1 playing, 2 no frame
     type: int
     initial_value: "0"
-  - id: video_errors           # consecutive failed fetches
+  - id: frame_errors           # consecutive failed fetches
     type: int
     initial_value: "0"
+  - id: frame_presets          # page names from the display-frame service, then "Custom"
+    type: std::vector<std::string>
+  - id: frame_presets_loaded
+    type: bool
+    initial_value: "false"
   - id: vol_until              # millis() until which the volume popup shows
     type: uint32_t
     initial_value: "0"
 
 interval:
+  # Until it succeeds, ask the display-frame service which pages it bundles and offer them in the
+  # Display Frame Source select. Fails quietly while Wi-Fi or the service is down.
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(frame_presets_loaded);'
+          then:
+            - http_request.get:
+                url: "${display_frame_server}/presets"
+                capture_response: true
+                max_response_buffer_size: 512
+                on_response:
+                  then:
+                    - lambda: |-
+                        id(frame_presets).clear();
+                        if (response->status_code == 200) {
+                          size_t start = 0;
+                          while (start < body.size()) {
+                            size_t end = body.find('\n', start);
+                            if (end == std::string::npos) end = body.size();
+                            if (end > start) id(frame_presets).push_back(body.substr(start, end - start));
+                            start = end + 1;
+                          }
+                        }
+                    - if:
+                        condition:
+                          lambda: 'return !id(frame_presets).empty();'
+                        then:
+                          - lambda: |-
+                              id(frame_presets).push_back("Custom");
+                              id(frame_presets_loaded) = true;
+                              // The select keeps pointers into frame_presets, which is not changed again.
+                              FixedVector<const char *> opts;
+                              opts.init(id(frame_presets).size());
+                              for (const auto &name : id(frame_presets)) opts.push_back(name.c_str());
+                              id(frame_src).traits.set_options(opts);
+                              id(frame_src).publish_state(id(frame_presets)[0]);
   - interval: 100ms            # frames for the boot animation (first ~2.6 s after power on)
     then:
       - lambda: |-

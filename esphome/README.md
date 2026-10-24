@@ -19,7 +19,7 @@ Device name: `cgotchi`. Config: [cheeko-gotchi.yaml](cheeko-gotchi.yaml).
 | Charging detect (GPIO 37) | not possible, see Notes |
 | Middle button (GPIO 3) | not working, see Troubleshooting |
 | Display: Face, Clock and Message pages, talking mouth while audio plays | works |
-| Video page (JPEG snapshots from a URL) | works: tested with the screenshot-service clock; see Video below |
+| Display Frame page (JPEG snapshots from a URL) | works: tested with the display-frame clock; see Display Frame below |
 | Clock format (12/24 hour) | works: **Clock Format** select; the choice is stored in flash and survives power-off and OTA |
 | Speaker (HA media player), mic level | works |
 | Touch (CST810), accelerometer (LIS2DH12) | not added yet |
@@ -65,31 +65,35 @@ unreliable.
 The panel is a 240x296 rectangle, but the bezel and glass have rounded corners
 that hide the pixels in all four corners (the radius is not measured; about
 25 to 30 px is a guess). Keep text, icons and anything important about 16 to
-20 px away from the corners, in display lambdas, video frames and website
+20 px away from the corners, in display lambdas, display frames and website
 screenshots alike. The Face, Clock and Message pages are centred and already
 fit. Content in the middle of each edge stays visible.
 
-## Video (JPEG snapshots)
+## Display Frame (JPEG snapshots)
 
-ESPHome has no video player, so the **Video** page shows JPEG snapshots fetched
+ESPHome has no video player, so the **Display Frame** page shows JPEG snapshots fetched
 one after another over HTTP (a few frames per second, no audio).
 
 1. Serve JPEG frames already scaled to 240x296. The device only decodes; it
    does not resize. Leave a safe margin for the rounded corners (see above).
-   [screenshot-service/](screenshot-service/README.md) does this: it renders a
+   [display-frame/](display-frame/README.md) does this: it renders a
    page (a built-in clock by default) in headless Chromium and serves it at
    `http://<docker-host-ip>:28240/frame.jpg`.
-2. In HA, set **Video URL** on the device to the frame address.
-3. Tap the screen until the Video page shows (the tap order is Face, Clock,
-   Message, Video), or set **Display Page** to Video in HA. Fetching runs only
-   while that page is showing, so tapping on or choosing another page stops it.
+2. Put the service address in `secrets.yaml` as `display_frame_server`
+   (`http://<docker-host-ip>:28240`, use the IP) and the default page as
+   `display_frame_url`. In HA, **Display Frame Source** picks a page bundled with the service
+   (the list comes from the service a few seconds after boot) or `Custom`,
+   which renders whatever **Display Frame URL** holds (sent as `?url=`). No reflash needed.
+3. Long press Volume Down until the Display Frame page shows (the order is Face,
+   Clock, Message, Display Frame, WebView), or set **Display Page** to Display Frame
+   in HA. Fetching runs only while that page is showing, so choosing another page
+   stops it.
 
 The page shows "Loading..." until the first frame decodes. After 3 failed
 fetches in a row (server down, wrong port, malformed or empty URL) it shows
-"No video" with "check Video URL". The device keeps retrying every second and the
-picture returns once the server answers. Tap to leave the page. A very short tap
-can be missed while a frame decodes (about 0.3 s each); tap again, or use
-**Display Page** in HA.
+"No frame" with "check Frame URL" (or `display_frame_server`). The device keeps retrying every second and the
+picture returns once the server answers. Touch does nothing on this page; change
+page with Volume Down (long press) or **Display Page** in HA.
 
 The server must not send `Last-Modified` or allow caching (send
 `Cache-Control: no-store`). Otherwise the device sends `If-Modified-Since`,
@@ -208,7 +212,7 @@ bootloader at `0x410000`. To keep a backup first:
 - A failed OTA that resets before boot completes rolls back to the previous
   build. Check `compiled on` in the log to see which build is running.
 - Saved settings: **Clock Format**, **Face Expression**, **Face Color Preset**, **Message Title/Body**
-  and **Video URL** use `restore_value: true`, so they live in flash and
+  and **Display Frame URL** use `restore_value: true`, so they live in flash and
   survive power-off, reboots and OTA. Renaming one or changing its options in
   the YAML resets it to the default once; a full flash erase clears them all.
 - There is no battery-backed clock. After power-off the Clock page shows
