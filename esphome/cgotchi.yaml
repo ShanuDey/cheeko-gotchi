@@ -6,8 +6,6 @@ substitutions:
 esphome:
   name: cgotchi
   friendly_name: Cheeko
-  includes:
-    - face_colors.h
   # GPIO 2 latches power OFF if driven HIGH (SKILL.md Gotcha 8). Force it LOW
   # as early as possible so the device never cuts its own power.
   on_boot:
@@ -43,9 +41,14 @@ esp32:
 # web page and the lambda-drawn pages can share the panel, and flip_x. See remote_webview/README.md.
 external_components:
   - source:
-      type: local
-      path: components
-    components: [remote_webview]
+      type: git
+      url: https://github.com/ShanuDey/cheeko-gotchi
+      ref: esphome
+      path: esphome/components
+    components: [remote_webview, face_colors]
+
+# Face color presets (FACE_PRESETS) used by the display and light lambdas.
+face_colors:
 
 # Octal PSRAM is mandatory on this board (SKILL.md Gotcha 1).
 psram:
