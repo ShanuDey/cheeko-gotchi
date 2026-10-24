@@ -78,7 +78,7 @@ one after another over HTTP (a few frames per second, no audio).
    does not resize. Leave a safe margin for the rounded corners (see above).
    [screenshot-service/](screenshot-service/README.md) does this: it renders a
    page (a built-in clock by default) in headless Chromium and serves it at
-   `http://<docker-host-ip>:8080/frame.jpg`.
+   `http://<docker-host-ip>:28240/frame.jpg`.
 2. In HA, set **Video URL** on the device to the frame address.
 3. Turn **Video Stream** on. It switches to the Video page and starts the loop.
    Turning it off returns to the Face page.
@@ -88,10 +88,10 @@ The server must not send `Last-Modified` or allow caching (send
 gets `304 Not Modified`, and the log fills with `HTTP Request failed; Code: 304`.
 The page select is not restored on boot, so a reboot lands on Face.
 
-The YAML never starts the next download from inside `on_download_finished`; it
-waits 50 ms first. ESPHome tears down the connection right after that callback,
-so a download started inside it is aborted and the image is released (frozen
-frame, then a black screen).
+The next download is started by the `fetch_next` script, never from inside
+`on_download_finished` or `on_error`. ESPHome tears down the connection right
+after those callbacks, so a download started inside them is aborted and the
+image is released (frozen frame, then a black screen).
 
 ## Validate before installing
 

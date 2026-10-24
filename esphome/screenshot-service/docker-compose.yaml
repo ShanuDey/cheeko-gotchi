@@ -1,10 +1,10 @@
 services:
   cheeko-screenshot:
-    image: ghcr.io/shanudey/cheeko-screenshot:latest
-    build: .   # only used if the image cannot be pulled and the folder has the Dockerfile
+    image: ghcr.io/shanudey/cheeko-screenshot:alpha
     container_name: cheeko-screenshot
+    init: true
     ports:
-      - 8080:8080
+      - 28240:28240
     environment:
       TARGET_URL: ${TARGET_URL:?set TARGET_URL in .env}
       MARGIN_PX: ${MARGIN_PX:-20}
