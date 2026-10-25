@@ -11,12 +11,13 @@ external_components:
       url: https://github.com/ShanuDey/cheeko-gotchi
       ref: esphome
       path: esphome/components
-    components: [remote_webview, face_colors]
+    components: [remote_webview, face]
 ```
 
 - `remote_webview`: the WebView client, a patched copy of strange-v's
   RemoteWebViewClient.
-- `face_colors`: header-only; makes `FACE_PRESETS` available to the lambdas.
+- `face`: header-only; the face expressions, animation and drawing, plus the color
+  presets. See [display-pages.md](display-pages.md#face).
 
 This is what lets the config work standalone in the HA builder with no local
 files. The catch: edits to `components/` have no effect on a build until you push
@@ -26,7 +27,7 @@ them. To iterate on a component locally, temporarily change the source to:
   - source:
       type: local
       path: components
-    components: [remote_webview, face_colors]
+    components: [remote_webview, face]
 ```
 
 and change it back before you commit. ESPHome caches the git clone; use

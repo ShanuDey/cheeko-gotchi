@@ -45,10 +45,11 @@ external_components:
       url: https://github.com/ShanuDey/cheeko-gotchi
       ref: esphome
       path: esphome/components
-    components: [remote_webview, face_colors]
+    components: [remote_webview, face]
 
-# Face color presets (FACE_PRESETS) used by the display and light lambdas.
-face_colors:
+# Face engine (components/face/): expressions, animation, drawing and the color presets
+# (cgotchi::face::FACE_PRESETS) used by the display and light lambdas.
+face:
 
 # Octal PSRAM is mandatory on this board (SKILL.md Gotcha 1).
 psram:
@@ -169,7 +170,7 @@ display:
       swap_xy: false
       mirror_x: true           # MADCTL 0x40 (SKILL.md section 4); false shows every page flipped left to right
       mirror_y: false
-    update_interval: never     # redraws come from entity changes, the minute tick and the talking-mouth interval
+    update_interval: never     # redraws come from entity changes, the minute tick and the face animation interval
     auto_clear_enabled: false  # the lambda fills the screen itself; the WebView page must not be cleared
     lambda: |-
       const Color BG(0, 0, 0), FG(255, 255, 255), ACCENT(0, 200, 255), DIM(130, 130, 130);
@@ -193,8 +194,10 @@ display:
       const bool speaking = !booting && (mp == media_player::MEDIA_PLAYER_STATE_PLAYING ||
                                          mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
       int page = id(page_sel).active_index().value_or(0);   // 0 Face, 1 Clock, 2 Message, 3 Display Frame, 4 WebView
-      const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);  // 0 happy 1 sad 2 sleepy 3 surprised
+      const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);  // index into cgotchi::face::Expression
       const int va = id(va_state);                           // 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
+      auto &face = cgotchi::face::instance();
+      face.visible = false;                                  // set again below if this frame shows the face
 
       // Privacy indicator: green dot at top center while the mic is open (wake word listening or
       // voice assistant capturing). Not drawn on the WebView page, which the component owns.
@@ -250,68 +253,19 @@ display:
       if (speaking || booting || va != 0) page = 0;          // face talks while audio plays
 
       if (page == 0) {
-        // The face color is chosen in HA; the clock, message and OTA screens keep the blue ACCENT.
+        // Face: components/face/ owns the expressions, animation and drawing. The face color is
+        // chosen in HA; the clock, message and OTA screens keep the blue ACCENT.
         const auto &fc = id(face_color).remote_values;
-        const Color ACCENT((uint8_t) (fc.get_red() * 255), (uint8_t) (fc.get_green() * 255), (uint8_t) (fc.get_blue() * 255));
-        const int cx = 120, ey = 110;
-        // Curved mouth: dir +1 smile, -1 frown.
-        auto curve = [&](int cy, int w, int h, int dir) {
-          int px = cx - w, py = cy;
-          for (int i = 1; i <= 24; i++) {
-            float t = i / 24.0f;
-            int x = cx - w + (int) (2 * w * t);
-            int y = cy + dir * (int) (h * sinf(t * M_PI));
-            for (int k = 0; k < 4; k++) it.line(px, py + k, x, y + k, ACCENT);
-            px = x; py = y;
-          }
-        };
-        // Eyes
-        if (va == 1) {                                       // listening: wide eyes, pulsing rings
-          const int pulse = (millis() / 250) % 3 * 3;
-          it.circle(cx - 45, ey, 26 + pulse, ACCENT);
-          it.circle(cx + 45, ey, 26 + pulse, ACCENT);
-          it.filled_circle(cx - 45, ey, 14, ACCENT);
-          it.filled_circle(cx + 45, ey, 14, ACCENT);
-        } else if (va == 2) {                                // thinking: eyes glance up and aside
-          it.filled_circle(cx - 40, ey - 12, 13, ACCENT);
-          it.filled_circle(cx + 50, ey - 12, 13, ACCENT);
-        } else if (expr == 2) {                              // sleepy: closed lines
-          it.filled_rectangle(cx - 62, ey - 3, 34, 6, ACCENT);
-          it.filled_rectangle(cx + 28, ey - 3, 34, 6, ACCENT);
-        } else if (expr == 3) {                              // surprised: big rings
-          it.circle(cx - 45, ey, 26, ACCENT);
-          it.circle(cx + 45, ey, 26, ACCENT);
-          it.filled_circle(cx - 45, ey, 9, ACCENT);
-          it.filled_circle(cx + 45, ey, 9, ACCENT);
-        } else {
-          const int er = (booting && up < 1200) ? 2 + (int) (14 * up / 1200) : 16;   // eyes open on boot
-          it.filled_circle(cx - 45, ey, er, ACCENT);
-          it.filled_circle(cx + 45, ey, er, ACCENT);
-        }
-        // Mouth
-        if (booting && up < 1200) {
-          // eyes still opening, no mouth yet
-        } else if (speaking) {
-          it.filled_circle(cx, 200, 10 + ((millis() / 180) % 3) * 8, ACCENT);
-        } else if (va == 1) {                                // listening: small open mouth
-          it.filled_circle(cx, 205, 9, ACCENT);
-        } else if (va == 2) {                                // thinking: three dots, one lit at a time
-          const int lit = (millis() / 350) % 3;
-          for (int d = 0; d < 3; d++) it.filled_circle(cx - 28 + d * 28, 205, d == lit ? 9 : 5, ACCENT);
-        } else if (expr == 0) {
-          curve(185, 55, 30, 1);
-        } else if (expr == 1) {
-          curve(215, 55, 30, -1);
-        } else if (expr == 2) {
-          it.circle(cx, 205, 9, ACCENT);
-        } else {
-          it.filled_circle(cx, 205, 20, ACCENT);
-        }
-        if (speaking) it.print(cx, 262, id(font_small), DIM, TextAlign::TOP_CENTER, "speaking...");
-        else if (va == 1) it.print(cx, 262, id(font_small), ACCENT, TextAlign::TOP_CENTER, "listening...");
-        else if (va == 2) it.print(cx, 262, id(font_small), DIM, TextAlign::TOP_CENTER, "thinking...");
-        else if (va == 4) it.print(cx, 262, id(font_small), Color(255, 80, 80), TextAlign::TOP_CENTER, "voice error");
-        if (booting && up >= 1200) it.print(cx, 255, id(font_med), ACCENT, TextAlign::TOP_CENTER, "Hello!");
+        const Color FACE((uint8_t) (fc.get_red() * 255), (uint8_t) (fc.get_green() * 255), (uint8_t) (fc.get_blue() * 255));
+        face.visible = true;
+        face.update({(cgotchi::face::Expression) expr, (cgotchi::face::Voice) va, speaking, booting}, up);
+        face.draw(it, FACE, BG, up);
+
+        if (speaking) it.print(120, 262, id(font_small), DIM, TextAlign::TOP_CENTER, "speaking...");
+        else if (va == 1) it.print(120, 262, id(font_small), FACE, TextAlign::TOP_CENTER, "listening...");
+        else if (va == 2) it.print(120, 262, id(font_small), DIM, TextAlign::TOP_CENTER, "thinking...");
+        else if (va == 4) it.print(120, 262, id(font_small), Color(255, 80, 80), TextAlign::TOP_CENTER, "voice error");
+        if (booting && up >= 1200) it.print(120, 255, id(font_med), FACE, TextAlign::TOP_CENTER, "Hello!");
       } else if (page == 1) {
         auto now = id(ha_time).now();
         if (now.is_valid()) {
@@ -547,7 +501,7 @@ select:
     on_value:
       - lambda: |-
           // Custom keeps whatever the Face Color picker holds.
-          for (const auto &p : FACE_PRESETS) {
+          for (const auto &p : cgotchi::face::FACE_PRESETS) {
             if (x == p.name) {
               auto call = id(face_color).turn_on();
               call.set_rgb(p.r, p.g, p.b);
@@ -558,7 +512,7 @@ select:
   - platform: template
     name: "Face Expression"
     id: face_sel
-    options: [Happy, Sad, Sleepy, Surprised]
+    options: [Happy, Sad, Sleepy, Surprised, Angry, Laughing, Confused, Love, Wink]   # same order as cgotchi::face::Expression
     initial_option: Happy
     optimistic: true
     restore_value: true
@@ -788,9 +742,9 @@ light:
           // Mirror the picker into the preset select: a matching preset, else Custom.
           const auto &v = id(face_color).remote_values;
           const char *match = "Custom";
-          size_t match_idx = sizeof(FACE_PRESETS) / sizeof(FACE_PRESETS[0]);   // Custom is the last option
+          size_t match_idx = sizeof(cgotchi::face::FACE_PRESETS) / sizeof(cgotchi::face::FACE_PRESETS[0]);   // Custom is the last option
           for (size_t i = 0; i < match_idx; i++) {
-            const auto &p = FACE_PRESETS[i];
+            const auto &p = cgotchi::face::FACE_PRESETS[i];
             if (fabsf(v.get_red() - p.r) < 0.02f && fabsf(v.get_green() - p.g) < 0.02f &&
                 fabsf(v.get_blue() - p.b) < 0.02f) {
               match = p.name;
@@ -967,14 +921,18 @@ interval:
     then:
       - lambda: |-
           if (millis() < 2800) id(lcd).update();
-  - interval: 200ms           # animate the talking mouth while audio plays, plus one redraw when it stops
+  - interval: 40ms            # face animation frames, only while the face is on screen and something moves
+    then:
+      - lambda: |-
+          auto &face = cgotchi::face::instance();
+          if (face.visible && face.needs_frame(millis())) id(lcd).update();
+  - interval: 200ms           # one redraw when audio starts or stops or the mic dot changes
     then:
       - lambda: |-
           const auto mp = id(gotchi_player).state;
           const bool playing = mp == media_player::MEDIA_PLAYER_STATE_PLAYING ||
                                mp == media_player::MEDIA_PLAYER_STATE_ANNOUNCING;
           const bool mic_on = id(mww).is_running() || id(va_state) == 1;
-          if (playing || id(va_state) == 1 || id(va_state) == 2 || playing != id(was_speaking) ||
-              mic_on != id(mic_was_on)) id(lcd).update();
+          if (playing != id(was_speaking) || mic_on != id(mic_was_on)) id(lcd).update();
           id(was_speaking) = playing;
           id(mic_was_on) = mic_on;

@@ -50,7 +50,7 @@ views:
                 content: "{{ states(entity) }}"
               - type: template
                 entity: select.cgotchi_face_expression
-                icon: "{{ {'Happy':'mdi:emoticon-happy-outline','Sad':'mdi:emoticon-sad-outline','Sleepy':'mdi:sleep','Surprised':'mdi:emoticon-excited-outline'}.get(states(entity),'mdi:emoticon-outline') }}"
+                icon: "{{ {'Happy':'mdi:emoticon-happy-outline','Sad':'mdi:emoticon-sad-outline','Sleepy':'mdi:sleep','Surprised':'mdi:emoticon-excited-outline','Angry':'mdi:emoticon-angry-outline','Laughing':'mdi:emoticon-lol-outline','Confused':'mdi:emoticon-confused-outline','Love':'mdi:emoticon-kiss-outline','Wink':'mdi:emoticon-wink-outline'}.get(states(entity),'mdi:emoticon-outline') }}"
                 icon_color: pink
                 content: "{{ states(entity) }}"
               - type: template

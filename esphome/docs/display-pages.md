@@ -17,11 +17,26 @@ is selected (the **Display Page** select does not change).
 
 ## Face
 
-**Face Expression** (Happy, Sad, Sleepy, Surprised) and **Face Color** (a color
-picker for the face only) with **Face Color Preset** (Blue, Green, Pink, Orange,
-Purple, Red, Yellow, White, or Custom). The presets live in the `face_colors`
-component; keep the select options in `cgotchi.yaml` in sync with the names in
-[face_colors.h](../components/face_colors/face_colors.h).
+**Face Expression** (Happy, Sad, Sleepy, Surprised, Angry, Laughing, Confused,
+Love, Wink) and **Face Color** (a color picker for the face only) with **Face
+Color Preset** (Blue, Green, Pink, Orange, Purple, Red, Yellow, White, or Custom).
+
+The face is drawn by the header-only `face` component, split by concern:
+
+| File | Role |
+|---|---|
+| [looks.h](../components/face/looks.h) | The `Shape` model (eye size, lids, gaze, mouth) and one function per expression. |
+| [draw.h](../components/face/draw.h) | Draws one frame from a `Shape`. No state, no timing. |
+| [face.h](../components/face/face.h) | Eases between expressions, blinks, glances around, reacts to voice and audio. |
+| [colors.h](../components/face/colors.h) | The color presets. |
+
+Between expressions the face morphs rather than snapping. While nothing moves, it
+redraws only for the occasional blink or glance, which keeps battery use low.
+
+To add an expression: write a function in `looks.h`, add it to the `Expression`
+enum and to `looks()`, and add its name to the **Face Expression** select in
+`cgotchi.yaml` in the same order. Keep the color preset names in `colors.h` in
+sync with the **Face Color Preset** select the same way.
 
 ## Clock
 
