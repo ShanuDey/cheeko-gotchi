@@ -14,6 +14,7 @@ What the device page in HA shows.
 | WebView Flip X | switch | Debug mirror for the WebView page. |
 | Clock Format | select | 12 or 24 hour. |
 | Face Expression | select | Happy, Sad, Sleepy, Surprised, Angry, Laughing, Confused, Love, Wink. |
+| Face Frame Rate | number | Highest face animation rate, 5 to 25 fps (default 20). Lower saves battery. Kept across reboots. |
 | Face Color | light | Color picker for the face only. |
 | Face Color Preset | select | Named face colors, or Custom. |
 | Message Title / Message Body | text | Content of the Message page. |

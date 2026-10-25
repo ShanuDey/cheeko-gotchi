@@ -32,6 +32,8 @@ The face is drawn by the header-only `face` component, split by concern:
 
 Between expressions the face morphs rather than snapping. While nothing moves, it
 redraws only for the occasional blink or glance, which keeps battery use low.
+**Face Frame Rate** (5 to 25 fps) caps how often it may redraw while animating:
+lower saves battery and leaves more time for audio, higher is smoother.
 
 To add an expression: write a function in `looks.h`, add it to the `Expression`
 enum and to `looks()`, and add its name to the **Face Expression** select in

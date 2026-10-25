@@ -519,6 +519,22 @@ select:
     on_value:
       - component.update: lcd
 
+number:
+  # Highest redraw rate of the face animation. Lower saves battery and leaves more time for audio;
+  # higher is smoother. A still face redraws only for the occasional blink either way.
+  - platform: template
+    name: "Face Frame Rate"
+    id: face_fps
+    min_value: 5
+    max_value: 25
+    step: 5
+    unit_of_measurement: fps
+    mode: slider
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 20
+
 text:
   # Change the dashboard from HA without reflashing (not kept across reboots; the
   # webview_url substitution is the default).
@@ -921,10 +937,11 @@ interval:
     then:
       - lambda: |-
           if (millis() < 2800) id(lcd).update();
-  - interval: 40ms            # face animation frames, only while the face is on screen and something moves
-    then:
+  - interval: 20ms            # face animation frames, only while the face is on screen and something moves
+    then:                     # (the Face Frame Rate setting caps how many of these ticks draw)
       - lambda: |-
           auto &face = cgotchi::face::instance();
+          face.set_fps(id(face_fps).state);
           if (face.visible && face.needs_frame(millis())) id(lcd).update();
   - interval: 200ms           # one redraw when audio starts or stops or the mic dot changes
     then:

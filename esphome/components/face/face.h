@@ -38,8 +38,16 @@ class Face {
     ease(now);
   }
 
-  // True when a redraw changes the picture: the face is still moving, or an effect is running.
+  // Caps animation frames per second (the "Face Frame Rate" setting). Out-of-range values, such
+  // as the NaN a setting has before it is restored, are ignored.
+  void set_fps(float fps) {
+    if (fps >= 1 && fps <= 60) frame_ms_ = (uint32_t) (1000.0f / fps);
+  }
+
+  // True when a redraw changes the picture and the frame rate cap allows it: the face is still
+  // moving, or an effect is running.
   bool needs_frame(uint32_t now) const {
+    if (now - last_ms_ < frame_ms_) return false;   // last_ms_ is the time of the last frame
     if (!settled_ || in_.speaking) return true;
     if (in_.voice == Voice::Listening || in_.voice == Voice::Thinking) return true;
     return blinking(now) || due(now, next_blink_) || due(now, next_gaze_);
@@ -72,6 +80,7 @@ class Face {
   bool hearts_ = false;
   bool settled_ = false;
   uint32_t last_ms_ = 0;
+  uint32_t frame_ms_ = 50;   // minimum time between animation frames
 
   uint32_t next_blink_ = 3000, next_gaze_ = 4500;
   uint32_t blink_start_ = 0xFFFFF000u;   // long ago: no blink in progress at power on
