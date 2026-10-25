@@ -21,18 +21,22 @@ external_components:
 
 This is what lets the config work standalone in the HA builder with no local
 files. The catch: edits to `components/` have no effect on a build until you push
-them. To iterate on a component locally, temporarily change the source to:
+them. To iterate on a component locally, run ESPHome through `dev.py` (from
+`esphome/`) instead of `uv run esphome`:
 
-```yaml
-  - source:
-      type: local
-      path: components
-    components: [remote_webview, face]
+```bash
+uv run dev.py compile
+uv run dev.py run --device <ip|COMx> --no-logs
+uv run dev.py logs --device <ip>
 ```
 
-and change it back before you commit. ESPHome caches the git clone; use
-`esphome config --clean` (or delete the cached clone under `.esphome/`) after
-pushing a change.
+It writes `cgotchi-dev.yaml` (git-ignored), a copy of `cgotchi.yaml` with only the
+component source switched to `components/` in this checkout. `cgotchi.yaml` is never
+edited, so there is nothing to change back. Use plain `uv run esphome ... cgotchi.yaml`
+to build what the branch on GitHub will give users.
+
+ESPHome caches the git clone; use `esphome config --clean` (or delete the cached
+clone under `.esphome/`) after pushing a change.
 
 ## Releasing
 
