@@ -5,7 +5,9 @@ using ESPHome's [host platform and SDL display](https://esphome.io/components/di
 so the same C++ that runs on the board draws what you see. Use it to tune faces and check
 animation before flashing.
 
-Only the face is simulated: not the other pages, audio, touch or Home Assistant.
+It stands in for Home Assistant: the control page sets the same entities HA sets on the
+device (expression, voice state, speaking, color, frame rate). Only the face is simulated: not
+the other pages, audio, touch, Wi-Fi or the real HA connection.
 
 ## One-time setup (Windows 11)
 
@@ -41,15 +43,20 @@ stops the simulator when you press Ctrl+C. The first build is slow. Options:
 `--no-sim` (only the page, start the simulator yourself), `--no-browser`, `--port`,
 `--distro` (the WSL distribution, default Ubuntu).
 
-The page changes the expression, voice state, speaking, color and frame rate, and has a
-slider for every shape field (eye size, lids, gaze, mouth) to tune an expression live.
-**Copy as C++** prints the tuned expression as a `looks.h` function to paste in. The
-preview is the simulator window itself, so it is exactly what the device draws.
+Put the page and the simulator window side by side (Win+Left and Win+Right): the page fills
+the width it is given.
 
-Tweaks belong to the current expression and are dropped when you pick another one.
-**Idle motion** off freezes blinking and glancing, which helps while tuning. The face engine
-reads its numbers from `components/face/looks.h`, and so does the page, so a new
-expression there shows up in both after a restart.
+## Tuning a face
+
+Faces are numbers in [components/face/looks.h](../components/face/looks.h). To change one:
+
+1. Edit the numbers (for example `mouth_curve` in `happy()`), and save.
+2. Press **Restart simulator** on the page. The rebuild takes about a second, then the window
+   reopens. Your settings stay as they were.
+
+The same numbers drive the device, so what you see is what a flash would give you. To see an
+expression, pick it on the page; to see it move, change between expressions, or set a voice
+state or speaking.
 
 ## Run the simulator alone
 
@@ -66,8 +73,7 @@ The simulator polls `settings.txt` (created from `settings.example.txt` on the f
 git-ignored) and applies it whenever it changes. The control page writes it, and you can edit
 it by hand in any editor: saving applies the change within a fraction of a second. The file is
 the whole state, so a line you delete goes back to its default. Bad lines are logged and
-skipped. See the comments in [settings.example.txt](settings.example.txt) for every key,
-including `shape.<field>` overrides.
+skipped. See the comments in [settings.example.txt](settings.example.txt) for every key.
 
 ## Keys
 
@@ -84,13 +90,20 @@ Click the window first so it has focus.
 Keys change the running simulator only, not `settings.txt`, so the next edit of the file or
 the page puts everything back to what it says.
 
+## What the page expects from the face headers
+
+`simctl/meta.py` reads the expression and voice names from the enums in
+`components/face/looks.h`, and the color presets from `colors.h`, with simple patterns. Keep
+their existing style. If it drifts, the page stops at startup with a message saying what it
+could not find. A new expression or color shows up on the page after a restart.
+
 ## Layout
 
 | Path | Role |
 |---|---|
 | `display-sim.yaml` | the simulator's ESPHome config (SDL window, settings polling, key bindings) |
 | `run.sh` | runs it in WSL |
-| `control.py`, `simctl/` | the control page's FastAPI server (`meta`, `settings`, `exporter`, `api`, `launcher`) |
+| `control.py`, `simctl/` | the control page's FastAPI server (`meta`, `settings`, `api`, `launcher`) |
 | `web/` | the page: plain HTML, CSS and JavaScript, no build step |
 | `settings.example.txt` | documented template for `settings.txt` |
 

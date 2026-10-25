@@ -12,7 +12,6 @@ let state;
 let saveTimer = null;
 let lastTouch = 0;
 
-const rows = new Map();         // shape field name -> { row, range, number }
 const expressionButtons = new Map();
 const voiceButtons = new Map();
 const colorButtons = new Map();
@@ -69,6 +68,16 @@ async function poll() {
   }
 }
 
+async function restartSimulator() {
+  setStatus("Restarting the simulator");
+  try {
+    await request("/api/restart", { method: "POST" });
+    setStatus("Simulator restarting, the window reopens in a few seconds", "ok");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
 // ---- building the controls ------------------------------------------------------------------
 
 function chip(label, onClick) {
@@ -102,76 +111,12 @@ function buildColors() {
   }
 }
 
-function buildShape() {
-  const groups = new Map();
-  for (const field of meta.fields) {
-    if (!groups.has(field.group)) {
-      const set = document.createElement("fieldset");
-      const legend = document.createElement("legend");
-      legend.textContent = field.group;
-      set.append(legend);
-      groups.set(field.group, set);
-      $("#shape").append(set);
-    }
-    groups.get(field.group).append(buildRow(field));
-  }
-}
-
-function buildRow(field) {
-  const row = document.createElement("div");
-  row.className = "row";
-
-  const label = document.createElement("label");
-  label.textContent = field.name;
-  label.htmlFor = `shape-${field.name}`;
-
-  const range = Object.assign(document.createElement("input"), {
-    type: "range", id: `shape-${field.name}`, min: field.min, max: field.max, step: 1,
+function bindControls() {
+  buildChips($("#expressions"), meta.expressions, expressionButtons, (name) => {
+    state.expression = name;
+    scheduleSave();
+    sync();
   });
-  const number = Object.assign(document.createElement("input"), {
-    type: "number", min: field.min, max: field.max, step: 1,
-  });
-  number.setAttribute("aria-label", `${field.name} value`);
-  const undo = chip("↶", () => setShapeValue(field.name, null));
-  undo.className = "undo";
-  undo.title = "Back to the expression's value";
-  undo.setAttribute("aria-label", `Reset ${field.name}`);
-
-  const onInput = (event) => {
-    if (event.target.value === "") return;
-    setShapeValue(field.name, Number(event.target.value));
-  };
-  range.addEventListener("input", onInput);
-  number.addEventListener("input", onInput);
-
-  row.append(label, range, number, undo);
-  rows.set(field.name, { row, range, number });
-  return row;
-}
-
-// ---- state changes --------------------------------------------------------------------------
-
-function expressionValues() {
-  return meta.expressions.find((e) => e.name === state.expression).values;
-}
-
-// value === null puts the field back to the expression's own value.
-function setShapeValue(name, value) {
-  if (value === null || value === expressionValues()[name]) delete state.shape[name];
-  else state.shape[name] = value;
-  scheduleSave();
-  sync();
-}
-
-function pickExpression(name) {
-  state.expression = name;
-  state.shape = {};   // tweaks belong to one expression
-  scheduleSave();
-  sync();
-}
-
-function bindSimpleControls() {
-  buildChips($("#expressions"), meta.expressions.map((e) => e.name), expressionButtons, pickExpression);
   buildChips($("#voices"), meta.voices, voiceButtons, (name) => {
     state.voice = name;
     scheduleSave();
@@ -179,12 +124,10 @@ function bindSimpleControls() {
   });
   buildColors();
 
-  for (const id of ["speaking", "idle_motion"]) {
-    $(`#${id}`).addEventListener("change", (event) => {
-      state[id] = event.target.checked;
-      scheduleSave();
-    });
-  }
+  $("#speaking").addEventListener("change", (event) => {
+    state.speaking = event.target.checked;
+    scheduleSave();
+  });
   const fps = $("#fps");
   Object.assign(fps, { min: meta.fps.min, max: meta.fps.max, step: meta.fps.step });
   fps.addEventListener("input", () => {
@@ -192,28 +135,7 @@ function bindSimpleControls() {
     scheduleSave();
     sync();
   });
-
-  $("#reset-shape").addEventListener("click", () => {
-    state.shape = {};
-    scheduleSave();
-    sync();
-  });
-  $("#copy-cpp").addEventListener("click", copyCpp);
-}
-
-async function copyCpp() {
-  clearTimeout(saveTimer);
-  await save();   // export reads settings.txt, so write the latest first
-  const code = await (await request("/api/export")).text();
-  const pre = $("#cpp");
-  pre.textContent = code;
-  pre.hidden = false;
-  try {
-    await navigator.clipboard.writeText(code);
-    setStatus("Copied to the clipboard", "ok");
-  } catch {
-    setStatus("Copy it from the box below", "");
-  }
+  $("#restart").addEventListener("click", restartSimulator);
 }
 
 // ---- showing the state ----------------------------------------------------------------------
@@ -223,18 +145,8 @@ function sync() {
   for (const [name, button] of voiceButtons) button.setAttribute("aria-pressed", name === state.voice);
   for (const [name, button] of colorButtons) button.setAttribute("aria-pressed", name === state.color);
   $("#speaking").checked = state.speaking;
-  $("#idle_motion").checked = state.idle_motion;
   $("#fps").value = state.fps;
   $("#fps-value").textContent = `${state.fps} fps`;
-
-  const base = expressionValues();
-  for (const [name, { row, range, number }] of rows) {
-    const changed = name in state.shape;
-    const value = changed ? state.shape[name] : base[name];
-    row.classList.toggle("changed", changed);
-    if (document.activeElement !== range) range.value = value;
-    if (document.activeElement !== number) number.value = value;
-  }
 }
 
 async function init() {
@@ -245,8 +157,7 @@ async function init() {
     setStatus(`Cannot load: ${error.message}`, "bad");
     return;
   }
-  bindSimpleControls();
-  buildShape();
+  bindControls();
   sync();
   setStatus("Connected", "ok");
   setInterval(poll, POLL_MS);

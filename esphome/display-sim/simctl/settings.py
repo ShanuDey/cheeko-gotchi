@@ -1,15 +1,16 @@
 """The settings model and the settings.txt file the simulator polls.
 
-The file is the whole state: the simulator resets whatever it does not mention. This module reads
-hand-edited files leniently (bad lines are skipped, option names are case insensitive) and writes
-atomically so the simulator never sees half a file.
+The file stands in for Home Assistant: it holds the same entities HA sets on the device. It is the
+whole state, so the simulator resets whatever it does not mention. This module reads hand-edited
+files leniently (bad lines are skipped, option names are case insensitive) and writes atomically so
+the simulator never sees half a file.
 """
 import os
 import shutil
 import time
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from . import SETTINGS_EXAMPLE_PATH, SETTINGS_PATH
 from .meta import FPS_DEFAULT, FPS_MAX, FPS_MIN, FPS_STEP, Meta
@@ -25,13 +26,11 @@ class Settings(BaseModel):
     speaking: bool = False
     color: str = "Blue"
     fps: int = FPS_DEFAULT
-    idle_motion: bool = True
-    shape: dict[str, float] = Field(default_factory=dict)   # field name -> overridden value (px)
 
     def problems(self, meta: Meta) -> list[str]:
         """What is wrong with these values; empty when they are fine."""
         found = []
-        if self.expression not in {e.name for e in meta.expressions}:
+        if self.expression not in meta.expressions:
             found.append(f"unknown expression '{self.expression}'")
         if self.voice not in meta.voices:
             found.append(f"unknown voice '{self.voice}'")
@@ -39,8 +38,6 @@ class Settings(BaseModel):
             found.append(f"unknown color '{self.color}'")
         if not FPS_MIN <= self.fps <= FPS_MAX or (self.fps - FPS_MIN) % FPS_STEP:
             found.append(f"fps must be {FPS_MIN} to {FPS_MAX} in steps of {FPS_STEP}")
-        known = {f.name for f in meta.fields}
-        found += [f"unknown shape field '{name}'" for name in self.shape if name not in known]
         return found
 
     def render(self) -> str:
@@ -50,17 +47,15 @@ class Settings(BaseModel):
             f"speaking = {'on' if self.speaking else 'off'}",
             f"color = {self.color}",
             f"fps = {self.fps}",
-            f"idle_motion = {'on' if self.idle_motion else 'off'}",
-            *(f"shape.{name} = {value:g}" for name, value in self.shape.items()),
         ]
         return HEADER + "\n".join(lines) + "\n"
 
 
 def parse(text: str, meta: Meta) -> Settings:
     """Reads settings.txt text. Anything unusable keeps its default."""
-    settings = Settings(expression=meta.expressions[0].name)
+    settings = Settings(expression=meta.expressions[0])
     options = {
-        "expression": [e.name for e in meta.expressions],
+        "expression": meta.expressions,
         "voice": meta.voices,
         "color": [c.name for c in meta.colors],
     }
@@ -75,13 +70,11 @@ def parse(text: str, meta: Meta) -> Settings:
                 match = next((o for o in options[key] if o.lower() == low), None)
                 if match:
                     setattr(settings, key, match)
-            elif key in ("speaking", "idle_motion"):
+            elif key == "speaking":
                 if low in ON | OFF:
-                    setattr(settings, key, low in ON)
+                    settings.speaking = low in ON
             elif key == "fps":
                 settings.fps = int(float(value))
-            elif key.startswith("shape."):
-                settings.shape[key.removeprefix("shape.")] = float(value)
         except ValueError:
             continue
     return settings

@@ -1,20 +1,19 @@
-"""The FastAPI app: a thin layer over meta, settings and the exporter, plus the static page."""
+"""The FastAPI app: a thin layer over meta, settings and the simulator, plus the static page."""
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import WEB_DIR
-from .exporter import expression_to_cpp
+from .launcher import Simulator
 from .meta import Meta
 from .settings import Settings, SettingsFile
 
 
-def create_app(meta: Meta, settings_file: SettingsFile) -> FastAPI:
+def create_app(meta: Meta, settings_file: SettingsFile, simulator: Simulator) -> FastAPI:
     app = FastAPI(title="Display simulator control", docs_url="/api/docs", redoc_url=None, openapi_url="/api/openapi.json")
 
     @app.get("/api/meta")
     def get_meta() -> dict:
-        """What can be set: fields with ranges, expressions with their values, voices, colors."""
+        """What can be set: expressions, voice states, colors and the frame rate range."""
         return meta.to_json()
 
     @app.get("/api/state")
@@ -31,10 +30,13 @@ def create_app(meta: Meta, settings_file: SettingsFile) -> FastAPI:
         settings_file.write(settings)
         return settings
 
-    @app.get("/api/export", response_class=PlainTextResponse)
-    def export() -> str:
-        """The current expression with its shape tweaks as a looks.h function."""
-        return expression_to_cpp(meta, settings_file.read())
+    @app.post("/api/restart")
+    def restart() -> dict:
+        """Restarts the simulator, to pick up edits to the face component (looks.h and friends)."""
+        if not simulator.managed:
+            raise HTTPException(status_code=409, detail="The simulator was not started by control.py (--no-sim)")
+        simulator.restart()
+        return {"status": "restarting"}
 
     app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
     return app

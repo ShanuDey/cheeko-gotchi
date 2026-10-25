@@ -3,8 +3,8 @@
     uv run --group sim esphome/display-sim/control.py
 
 Starts the simulator (in WSL on Windows) and a page at http://localhost:8081 where you change the
-expression, voice state, color, frame rate and shape fields while it runs. The page writes
-settings.txt, which the simulator polls. See README.md.
+expression, voice state, color and frame rate while it runs, like Home Assistant does on the
+device. The page writes settings.txt, which the simulator polls. See README.md.
 """
 import argparse
 import threading
@@ -27,17 +27,18 @@ def main() -> None:
     args = parser.parse_args()
 
     meta = load_meta()   # fails early, with a clear message, if looks.h is not in the expected style
-    app = create_app(meta, SettingsFile(meta))
+    simulator = Simulator(args.distro, managed=not args.no_sim)
+    app = create_app(meta, SettingsFile(meta), simulator)
 
-    simulator = Simulator(args.distro)
-    if not args.no_sim:
+    if simulator.managed:
         simulator.start()
     url = f"http://localhost:{args.port}"
     if not args.no_browser:
         threading.Timer(1.5, webbrowser.open, args=[url]).start()
     print(f"control page: {url}")
     try:
-        uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+        # The page keeps a connection open and polls, so do not wait long for it on Ctrl+C.
+        uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning", timeout_graceful_shutdown=2)
     finally:
         simulator.stop()
 

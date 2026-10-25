@@ -17,8 +17,9 @@ def _wsl_path(path: Path) -> str:
 
 
 class Simulator:
-    def __init__(self, distro: str = "Ubuntu"):
+    def __init__(self, distro: str = "Ubuntu", managed: bool = True):
         self.distro = distro
+        self.managed = managed   # False: the user runs the simulator, so there is nothing to restart
         self.process: subprocess.Popen | None = None
 
     @property
@@ -32,6 +33,10 @@ class Simulator:
             command = ["bash", str(RUN_SH)]
         print(f"starting the simulator: {' '.join(command)}")
         self.process = subprocess.Popen(command)
+
+    def restart(self) -> None:
+        self.stop()
+        self.start()
 
     def stop(self) -> None:
         if self.process is None:

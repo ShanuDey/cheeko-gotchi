@@ -5,10 +5,6 @@
 // eyes and a mouth. An expression is a named Shape. To add one: write a function below, add it to
 // the Expression enum and to looks(), and add the name to the "Face Expression" select in
 // cgotchi.yaml (same order as the enum).
-//
-// display-sim/control.py reads this file to build its tuning sliders. Keep the existing forms:
-// Shape fields as "float name = value," declarations, and each expression as
-// "inline Shape name() { Shape s; s.field = value; ... return s; }" (or "Shape s = other();").
 
 #include <stddef.h>
 #include <stdint.h>
@@ -48,15 +44,6 @@ static const Field kFields[] = {
 };
 constexpr size_t kFieldCount = sizeof(kFields) / sizeof(kFields[0]);
 static_assert(kFieldCount * sizeof(float) == sizeof(Shape), "kFields must list every Shape field");
-
-#ifdef CGOTCHI_SIM
-// Names for the display simulator's live tuning (settings.txt "shape.<name>"), in kFields order.
-static const char *const kFieldNames[] = {
-    "eye_w",    "eye_h",    "eye_r",    "eye_gap",  "eye_y",     "lid_top",     "lid_tilt",   "lid_asym",
-    "lid_bot",  "wink",     "look_x",   "look_y",   "mouth_y",   "mouth_w",     "mouth_curve", "mouth_open",
-};
-static_assert(sizeof(kFieldNames) / sizeof(kFieldNames[0]) == kFieldCount, "kFieldNames must match kFields");
-#endif
 
 struct Look {
   const char *name;

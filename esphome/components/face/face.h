@@ -11,9 +11,6 @@
 
 #include <math.h>
 #include <stdint.h>
-#ifdef CGOTCHI_SIM
-#include <string>
-#endif
 
 #include "colors.h"
 #include "draw.h"
@@ -56,25 +53,6 @@ class Face {
     return blinking(now) || due(now, next_blink_) || due(now, next_gaze_);
   }
 
-#ifdef CGOTCHI_SIM
-  // Display simulator hooks, compiled only there (display-sim.yaml sets CGOTCHI_SIM): change one
-  // shape field live, and freeze blinking and glancing while tuning.
-  bool set_override(const std::string &name, float value) {
-    for (size_t i = 0; i < kFieldCount; i++) {
-      if (name == kFieldNames[i]) {
-        override_[i] = value;
-        has_override_[i] = true;
-        return true;
-      }
-    }
-    return false;
-  }
-  void clear_overrides() {
-    for (bool &has : has_override_) has = false;
-  }
-  void set_idle_motion(bool on) { idle_motion_ = on; }
-#endif
-
   template <typename It, typename Color>
   void draw(It &it, Color fg, Color bg, uint32_t now) const {
     Frame f;
@@ -109,12 +87,6 @@ class Face {
   float gaze_x_ = 0, gaze_y_ = 0;
   uint32_t rng_ = 2463534242u;
 
-#ifdef CGOTCHI_SIM
-  float override_[kFieldCount] = {};
-  bool has_override_[kFieldCount] = {};
-  bool idle_motion_ = true;
-#endif
-
   static bool due(uint32_t now, uint32_t at) { return (int32_t) (now - at) >= 0; }
   bool blinking(uint32_t now) const { return now - blink_start_ < kBlinkMs; }
 
@@ -136,13 +108,6 @@ class Face {
 
   // Blink every few seconds (sometimes twice) and glance around now and then.
   void schedule_idle(uint32_t now) {
-#ifdef CGOTCHI_SIM
-    if (!idle_motion_) {   // keep the timers ahead of now so needs_frame() stays quiet
-      next_blink_ = next_gaze_ = now + 1000;
-      gaze_x_ = gaze_y_ = 0;
-      return;
-    }
-#endif
     if (due(now, next_blink_)) {
       blink_start_ = now;
       next_blink_ = now + (random(100) < 15 ? 300 : 2500 + random(3500));
@@ -181,11 +146,6 @@ class Face {
       default:
         break;
     }
-#ifdef CGOTCHI_SIM
-    for (size_t i = 0; i < kFieldCount; i++) {
-      if (has_override_[i]) s.*kFields[i] = override_[i];
-    }
-#endif
     if (idle_life()) {
       s.look_x += gaze_x_;
       s.look_y += gaze_y_;

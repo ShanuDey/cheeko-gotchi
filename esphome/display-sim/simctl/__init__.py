@@ -2,9 +2,8 @@
 
     meta      what can be set, read from the face component's headers (no second copy)
     settings  the settings model and the settings.txt reader and writer
-    exporter  turns tuned values into a looks.h expression function
     api       the FastAPI routes
-    launcher  starts and stops the simulator itself (in WSL on Windows)
+    launcher  starts, stops and restarts the simulator itself (in WSL on Windows)
 """
 from pathlib import Path
 

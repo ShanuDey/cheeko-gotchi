@@ -4,9 +4,6 @@
 # simulated, not the other pages or hardware.
 esphome:
   name: cgotchi-sim
-  build_flags:
-    - -DCGOTCHI_SIM            # enables the live tuning hooks in components/face/ (not in the firmware)
-
 host:
 
 # Always the local components: the point is to try edits before pushing them.
@@ -183,11 +180,6 @@ interval:
             ESP_LOGW("settings", "'%s' is not an option of %s", value.c_str(), sel->get_name().c_str());
           };
 
-          // The file is the whole state: anything it does not mention goes back to its default.
-          auto &face = cgotchi::face::instance();
-          face.clear_overrides();
-          face.set_idle_motion(true);
-
           size_t start = 0;
           while (start <= text.size()) {
             size_t end = text.find('\n', start);
@@ -216,19 +208,11 @@ interval:
               const float fps = strtof(value.c_str(), &endp);
               if (endp == value.c_str()) ESP_LOGW("settings", "fps must be a number, not '%s'", value.c_str());
               else id(face_fps).make_call().set_value(fps).perform();
-            } else if (key == "idle_motion") {
-              const std::string v = lower(value);
-              face.set_idle_motion(!(v == "off" || v == "false" || v == "0"));
-            } else if (key.rfind("shape.", 0) == 0) {
-              char *endp = nullptr;
-              const float num = strtof(value.c_str(), &endp);
-              if (endp == value.c_str()) ESP_LOGW("settings", "%s must be a number, not '%s'", key.c_str(), value.c_str());
-              else if (!face.set_override(key.substr(6), num)) ESP_LOGW("settings", "unknown shape field '%s'", key.c_str() + 6);
             } else {
               ESP_LOGW("settings", "unknown setting '%s'", key.c_str());
             }
           }
-          id(lcd).update();   // redraw now: shape changes alone do not trigger an entity update
+          id(lcd).update();
   - interval: 20ms            # same animation tick as the device
     then:
       - lambda: |-
