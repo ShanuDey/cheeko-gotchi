@@ -1,0 +1,17 @@
+# Display simulator settings. run.sh copies this to settings.txt (git-ignored) the first time.
+# Edit settings.txt while the simulator runs: saving applies the change within a fraction of a
+# second. One "key = value" per line, "#" starts a comment. Unknown or bad lines are logged and
+# skipped, and values are not case sensitive. The file is the whole state: a line you remove
+# goes back to its default. The control page (control.py) writes this same file.
+
+expression = Happy       # Happy, Sad, Sleepy, Surprised, Angry, Laughing, Confused, Love, Wink
+voice = Idle             # Idle, Listening, Thinking, Replying, Error
+speaking = off           # on or off
+color = Blue             # Blue, Green, Pink, Orange, Purple, Red, Yellow, White
+fps = 20                 # 5 to 25, in steps of 5
+idle_motion = on         # off freezes blinking and glancing, handy while tuning a shape
+
+# Live shape tuning: uncomment to override one field of the current expression (see Shape in
+# components/face/looks.h for the fields). Pixels. Copy the final numbers into looks.h.
+# shape.eye_w = 44
+# shape.mouth_curve = 30

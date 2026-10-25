@@ -1,0 +1,2 @@
+# Runs inside WSL (bash), which fails on CRLF line endings.
+*.sh text eol=lf

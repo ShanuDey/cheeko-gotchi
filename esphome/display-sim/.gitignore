@@ -1,0 +1,5 @@
+# Local simulator settings (copy of settings.example.txt) and ESPHome's per-folder files.
+/settings.txt
+/settings.tmp
+__pycache__/
+/.esphome/

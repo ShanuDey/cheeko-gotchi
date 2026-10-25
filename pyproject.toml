@@ -11,3 +11,7 @@ dev = [
     "esphome==2026.10.0",
     "esptool>=5.4.0",
 ]
+sim = [
+    "fastapi>=0.162.0",
+    "uvicorn>=0.54.0",
+]

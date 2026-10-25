@@ -35,6 +35,9 @@ redraws only for the occasional blink or glance, which keeps battery use low.
 **Face Frame Rate** (5 to 25 fps) caps how often it may redraw while animating:
 lower saves battery and leaves more time for audio, higher is smoother.
 
+To tune an expression without flashing, use the [display simulator](../display-sim/README.md):
+it runs this same component on your PC with a control page and a slider for every shape field.
+
 To add an expression: write a function in `looks.h`, add it to the `Expression`
 enum and to `looks()`, and add its name to the **Face Expression** select in
 `cgotchi.yaml` in the same order. Keep the color preset names in `colors.h` in

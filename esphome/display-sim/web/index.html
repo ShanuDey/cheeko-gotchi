@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Display simulator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Display simulator</h1>
+    <span id="status" class="status" role="status">Connecting</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Face</h2>
+      <div id="expressions" class="chips" role="group" aria-label="Expression"></div>
+      <h3>Voice state</h3>
+      <div id="voices" class="chips" role="group" aria-label="Voice state"></div>
+      <div class="toggles">
+        <label class="toggle"><input type="checkbox" id="speaking"><span>Speaking</span></label>
+        <label class="toggle" title="Off freezes blinking and glancing while you tune a shape">
+          <input type="checkbox" id="idle_motion"><span>Idle motion</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Look</h2>
+      <h3>Color</h3>
+      <div id="colors" class="swatches" role="group" aria-label="Color"></div>
+      <h3>Frame rate <output id="fps-value"></output></h3>
+      <input type="range" id="fps" aria-label="Frame rate">
+    </section>
+
+    <section class="card wide">
+      <div class="card-head">
+        <h2>Shape tuning</h2>
+        <div class="actions">
+          <button type="button" id="reset-shape">Reset tweaks</button>
+          <button type="button" id="copy-cpp" class="primary">Copy as C++</button>
+        </div>
+      </div>
+      <p class="hint">Tweaks apply to the current expression and are lost when you pick another one.
+        Copy the result into <code>looks.h</code>. The preview is the simulator window.</p>
+      <div id="shape"></div>
+      <pre id="cpp" hidden></pre>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

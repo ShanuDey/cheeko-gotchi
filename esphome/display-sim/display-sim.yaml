@@ -1,0 +1,282 @@
+# Display simulator: runs the real face component on a PC, no device needed. It opens a 240x296
+# SDL window. Settings come from settings.txt (edit it while this runs), and from the keyboard
+# while the window has focus (keys at the bottom of this file). See README.md. Only the face is
+# simulated, not the other pages or hardware.
+esphome:
+  name: cgotchi-sim
+  build_flags:
+    - -DCGOTCHI_SIM            # enables the live tuning hooks in components/face/ (not in the firmware)
+
+host:
+
+# Always the local components: the point is to try edits before pushing them.
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [face]
+
+face:
+
+logger:
+
+display:
+  - platform: sdl
+    id: lcd
+    dimensions:
+      width: 240
+      height: 296
+    update_interval: never
+    auto_clear_enabled: false
+    lambda: |-
+      const Color BG(0, 0, 0), DIM(130, 130, 130);
+      const uint32_t up = millis();
+      const bool booting = up < 2600;
+      const int expr = booting ? 0 : id(face_sel).active_index().value_or(0);
+      const int va = id(voice_sel).active_index().value_or(0);   // 0 idle, 1 listening, 2 thinking, 3 replying, 4 error
+      const bool speaking = !booting && id(speaking_sw).state;
+      auto &face = cgotchi::face::instance();
+
+      const auto &fc = id(face_color).remote_values;
+      const Color FACE((uint8_t) (fc.get_red() * 255), (uint8_t) (fc.get_green() * 255), (uint8_t) (fc.get_blue() * 255));
+      it.fill(BG);
+      face.visible = true;
+      face.update({(cgotchi::face::Expression) expr, (cgotchi::face::Voice) va, speaking, booting}, up);
+      face.draw(it, FACE, BG, up);
+      if (speaking) it.print(120, 262, id(font_small), DIM, TextAlign::TOP_CENTER, "speaking...");
+      else if (va == 1) it.print(120, 262, id(font_small), FACE, TextAlign::TOP_CENTER, "listening...");
+      else if (va == 2) it.print(120, 262, id(font_small), DIM, TextAlign::TOP_CENTER, "thinking...");
+      else if (va == 4) it.print(120, 262, id(font_small), Color(255, 80, 80), TextAlign::TOP_CENTER, "voice error");
+      if (booting && up >= 1200) it.print(120, 255, id(font_med), FACE, TextAlign::TOP_CENTER, "Hello!");
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_med
+    size: 28
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 20
+
+select:
+  - platform: template
+    name: "Face Expression"
+    id: face_sel
+    options: [Happy, Sad, Sleepy, Surprised, Angry, Laughing, Confused, Love, Wink]   # same order as cgotchi::face::Expression
+    initial_option: Happy
+    optimistic: true
+    on_value:
+      - component.update: lcd
+  - platform: template
+    name: "Voice State"
+    id: voice_sel
+    options: [Idle, Listening, Thinking, Replying, Error]
+    initial_option: Idle
+    optimistic: true
+    on_value:
+      - component.update: lcd
+  - platform: template
+    name: "Face Color Preset"
+    id: face_preset_sel
+    options: [Blue, Green, Pink, Orange, Purple, Red, Yellow, White]   # same order as cgotchi::face::FACE_PRESETS
+    initial_option: Blue
+    optimistic: true
+    on_value:
+      - lambda: |-
+          for (const auto &p : cgotchi::face::FACE_PRESETS) {
+            if (x == p.name) {
+              auto call = id(face_color).turn_on();
+              call.set_rgb(p.r, p.g, p.b);
+              call.set_transition_length(0);
+              call.perform();
+            }
+          }
+
+switch:
+  - platform: template
+    name: "Speaking"
+    id: speaking_sw
+    optimistic: true
+    on_turn_on:
+      - component.update: lcd
+    on_turn_off:
+      - component.update: lcd
+
+number:
+  - platform: template
+    name: "Face Frame Rate"
+    id: face_fps
+    min_value: 5
+    max_value: 25
+    step: 5
+    unit_of_measurement: fps
+    mode: slider
+    optimistic: true
+    initial_value: 20
+
+output:
+  - platform: template
+    id: face_r
+    type: float
+    write_action: []
+  - platform: template
+    id: face_g
+    type: float
+    write_action: []
+  - platform: template
+    id: face_b
+    type: float
+    write_action: []
+
+light:
+  - platform: rgb
+    name: "Face Color"
+    id: face_color
+    red: face_r
+    green: face_g
+    blue: face_b
+    restore_mode: ALWAYS_ON
+    default_transition_length: 0s
+    initial_state:
+      color_mode: rgb
+      red: 0%
+      green: 78%
+      blue: 100%
+    on_state:
+      - component.update: lcd
+
+globals:
+  - id: settings_text         # contents of settings.txt last applied, to spot a change
+    type: std::string
+
+interval:
+  # Apply settings.txt (path in $DISPLAY_SIM_SETTINGS, set by run.sh) whenever its contents change.
+  - interval: 200ms
+    then:
+      - lambda: |-
+          const char *path = getenv("DISPLAY_SIM_SETTINGS");
+          FILE *file = path ? fopen(path, "r") : nullptr;
+          if (file == nullptr) return;
+          char buf[1024];
+          const size_t len = fread(buf, 1, sizeof(buf) - 1, file);
+          fclose(file);
+          const std::string text(buf, len);
+          if (text == id(settings_text)) return;
+          id(settings_text) = text;
+
+          auto lower = [](std::string s) {
+            for (auto &c : s) c = tolower((unsigned char) c);
+            return s;
+          };
+          auto trim = [](std::string s) {
+            const char *ws = " \t\r\n";
+            s.erase(0, s.find_first_not_of(ws));
+            s.erase(s.find_last_not_of(ws) + 1);
+            return s;
+          };
+          auto pick = [&](select::Select *sel, const std::string &value) {
+            for (const char *opt : sel->traits.get_options()) {
+              if (lower(opt) == lower(value)) {
+                sel->make_call().set_option(opt).perform();
+                return;
+              }
+            }
+            ESP_LOGW("settings", "'%s' is not an option of %s", value.c_str(), sel->get_name().c_str());
+          };
+
+          // The file is the whole state: anything it does not mention goes back to its default.
+          auto &face = cgotchi::face::instance();
+          face.clear_overrides();
+          face.set_idle_motion(true);
+
+          size_t start = 0;
+          while (start <= text.size()) {
+            size_t end = text.find('\n', start);
+            if (end == std::string::npos) end = text.size();
+            std::string line = text.substr(start, end - start);
+            start = end + 1;
+            line = trim(line.substr(0, line.find('#')));
+            if (line.empty()) continue;
+            const size_t eq = line.find('=');
+            if (eq == std::string::npos) {
+              ESP_LOGW("settings", "ignored line without '=': %s", line.c_str());
+              continue;
+            }
+            const std::string key = lower(trim(line.substr(0, eq))), value = trim(line.substr(eq + 1));
+            ESP_LOGI("settings", "%s = %s", key.c_str(), value.c_str());
+            if (key == "expression") pick(id(face_sel), value);
+            else if (key == "voice") pick(id(voice_sel), value);
+            else if (key == "color") pick(id(face_preset_sel), value);
+            else if (key == "speaking") {
+              const std::string v = lower(value);
+              if (v == "on" || v == "true" || v == "1") id(speaking_sw).turn_on();
+              else if (v == "off" || v == "false" || v == "0") id(speaking_sw).turn_off();
+              else ESP_LOGW("settings", "speaking must be on or off, not '%s'", value.c_str());
+            } else if (key == "fps") {
+              char *endp = nullptr;
+              const float fps = strtof(value.c_str(), &endp);
+              if (endp == value.c_str()) ESP_LOGW("settings", "fps must be a number, not '%s'", value.c_str());
+              else id(face_fps).make_call().set_value(fps).perform();
+            } else if (key == "idle_motion") {
+              const std::string v = lower(value);
+              face.set_idle_motion(!(v == "off" || v == "false" || v == "0"));
+            } else if (key.rfind("shape.", 0) == 0) {
+              char *endp = nullptr;
+              const float num = strtof(value.c_str(), &endp);
+              if (endp == value.c_str()) ESP_LOGW("settings", "%s must be a number, not '%s'", key.c_str(), value.c_str());
+              else if (!face.set_override(key.substr(6), num)) ESP_LOGW("settings", "unknown shape field '%s'", key.c_str() + 6);
+            } else {
+              ESP_LOGW("settings", "unknown setting '%s'", key.c_str());
+            }
+          }
+          id(lcd).update();   // redraw now: shape changes alone do not trigger an entity update
+  - interval: 20ms            # same animation tick as the device
+    then:
+      - lambda: |-
+          auto &face = cgotchi::face::instance();
+          face.set_fps(id(face_fps).state);
+          if (face.visible && face.needs_frame(millis())) id(lcd).update();
+  - interval: 100ms           # frames for the boot animation
+    then:
+      - lambda: |-
+          if (millis() < 2800) id(lcd).update();
+
+# Keys (click the window first so it has focus):
+#   Left / Right  previous / next expression      V  next voice state
+#   S             toggle speaking                 C  next color
+#   Up / Down     frame rate +5 / -5 fps
+binary_sensor:
+  - platform: sdl
+    id: key_right
+    key: SDLK_RIGHT
+    on_press:
+      - select.next: {id: face_sel, cycle: true}
+  - platform: sdl
+    id: key_left
+    key: SDLK_LEFT
+    on_press:
+      - select.previous: {id: face_sel, cycle: true}
+  - platform: sdl
+    id: key_voice
+    key: SDLK_v
+    on_press:
+      - select.next: {id: voice_sel, cycle: true}
+  - platform: sdl
+    id: key_speak
+    key: SDLK_s
+    on_press:
+      - switch.toggle: speaking_sw
+  - platform: sdl
+    id: key_color
+    key: SDLK_c
+    on_press:
+      - select.next: {id: face_preset_sel, cycle: true}
+  - platform: sdl
+    id: key_fps_up
+    key: SDLK_UP
+    on_press:
+      - number.increment: {id: face_fps, cycle: false}
+  - platform: sdl
+    id: key_fps_down
+    key: SDLK_DOWN
+    on_press:
+      - number.decrement: {id: face_fps, cycle: false}
